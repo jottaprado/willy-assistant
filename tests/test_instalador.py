@@ -20,6 +20,8 @@ import shutil
 import tempfile
 import unittest
 import unittest.mock
+import zipfile
+import zlib
 
 from core.autostart import APP_NAME, REG_KEY_PATH
 from core.single_instance import SingleInstanceManager
@@ -292,7 +294,7 @@ def _funcao_do_build(nome):
     import sys as _sys
     arvore = ast.parse(_ler("build_installer.py"))
     funcao = next(n for n in arvore.body if isinstance(n, ast.FunctionDef) and n.name == nome)
-    escopo = {"os": os, "shutil": shutil, "sys": _sys}
+    escopo = {"os": os, "shutil": shutil, "sys": _sys, "zipfile": zipfile, "zlib": zlib}
     exec(compile(ast.Module(body=[funcao], type_ignores=[]), "build_installer.py", "exec"), escopo)
     return escopo[nome]
 
@@ -362,6 +364,69 @@ class TestDistSemOCaminhoDaMaquina(unittest.TestCase):
         self._gravar(os.path.join("_internal", "x.pyd"), b"C:/Users/runneradmin/.cargo/registry")
         self._gravar(os.path.join("_internal", "y.txt"), b"C:\\Users\\fulanobeltrano\\z")
         _funcao_do_build("_conferir_sem_caminho_da_maquina")(self.dist, "C:\\Users\\fulano")
+
+    def _exe_falso(self, *blocos):
+        """Monta um Willy.exe falso com cabeçalho MZ, lixo com falso 0x78 0x9c e blocos zlib."""
+        partes = [b"MZ\x90\x00lixo\x78\x9c\xff\xff\x00\x01"]
+        for bloco in blocos:
+            partes.append(zlib.compress(bloco))
+            partes.append(b"\x00\x00pad\x78\xda\x00\x00")
+        return b"".join(partes)
+
+    def _zip_falso(self, rel, membros):
+        caminho = os.path.join(self.dist, rel)
+        os.makedirs(os.path.dirname(caminho), exist_ok=True)
+        with zipfile.ZipFile(caminho, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for nome, dados in membros.items():
+                zf.writestr(nome, dados)
+
+    def test_conferencia_acusa_caminho_em_bloco_zlib_do_exe(self):
+        exe = self._exe_falso(
+            b"\xe3\x00core\\config.py\x00willy.py\x00",
+            b"\xe3\x00C:\\Users\\Fulano\\willy\\core\\audio.py\x00",
+        )
+        self._gravar("Willy.exe", exe)
+        with self.assertRaises(SystemExit) as erro:
+            _funcao_do_build("_conferir_sem_caminho_da_maquina")(self.dist, "C:\\Users\\fulano")
+        self.assertIn("Willy.exe", str(erro.exception))
+
+    def test_conferencia_acusa_caminho_em_membro_de_zip(self):
+        self._zip_falso(
+            os.path.join("_internal", "base_library.zip"),
+            {
+                "limpo.pyc": b"sem caminho nenhum",
+                "vaza.pyc": b"\xe3\x00C:\\Users\\Fulano\\projeto\\mod.py\x00",
+                "vaza_u16.dat": "c:/users/fulano/x".encode("utf-16-le"),
+            },
+        )
+        with self.assertRaises(SystemExit) as erro:
+            _funcao_do_build("_conferir_sem_caminho_da_maquina")(self.dist, "C:\\Users\\fulano")
+        msg = str(erro.exception)
+        self.assertIn("base_library.zip", msg)
+        self.assertIn("vaza.pyc", msg)
+        self.assertIn("vaza_u16.dat", msg)
+        self.assertNotIn("limpo.pyc", msg)
+
+    def test_conferencia_passa_com_exe_limpo_e_controles_positivos(self):
+        exe = self._exe_falso(
+            b"\xe3\x00core\\config.py\x00",
+            b"\xe3\x00willy.py\x00C:/Users/runneradmin/.cargo/x",
+        )
+        self._gravar("Willy.exe", exe)
+        self._zip_falso(
+            os.path.join("_internal", "base_library.zip"),
+            {"os.pyc": b"C:/Users/runneradmin/lib/os.py"},
+        )
+        _funcao_do_build("_conferir_sem_caminho_da_maquina")(self.dist, "C:\\Users\\fulano")
+
+    def test_conferencia_reprova_exe_sem_controles_positivos(self):
+        exe = self._exe_falso(b"apenas um bloco sem os nomes de controle")
+        self._gravar("Willy.exe", exe)
+        with self.assertRaises(SystemExit) as erro:
+            _funcao_do_build("_conferir_sem_caminho_da_maquina")(self.dist, "C:\\Users\\fulano")
+        msg = str(erro.exception)
+        self.assertIn("Willy.exe", msg)
+        self.assertIn("core\\config.py", msg)
 
     def test_build_limpa_e_confere_antes_do_instalador_e_da_copia_local(self):
         fonte = _ler("build_installer.py")

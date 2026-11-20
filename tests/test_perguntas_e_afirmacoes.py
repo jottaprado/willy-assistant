@@ -204,8 +204,8 @@ class TestPerguntaIndireta(_Casos):
 
 
 class TestConclusaoDeQuemFala(_Casos):
-    """Decisão do dono: a dedução no meio do raciocínio é afirmação. O Smart recebia a instrução
-    e mantinha o "?" nos dois casos reais (medido na Groq, 25/10)."""
+    """Dedução no meio do raciocínio é afirmação. O Smart recebia a instrução
+    e mantinha o "?" nas conclusões (medido na Groq, 25/10)."""
 
     def test_deducao_com_interrogacao_vira_afirmacao(self):
         self._conferir([
@@ -216,8 +216,8 @@ class TestConclusaoDeQuemFala(_Casos):
             ("Pelo que eu entendi, o cache não é o culpado?", "Pelo que eu entendi, o cache não é o culpado."),
             ("Pelo que eu tô entendendo, o build é manual?", "Pelo que eu tô entendendo, o build é manual."),
             ("Pelo que entendo, o token não expira?", "Pelo que entendo, o token não expira."),
-            # "e-commerce" não é o "e" que puxa a pergunta (3ª rodada do juiz).
-            ("Ou seja, e-commerce no Brasil vive de imposto?", "Ou seja, e-commerce no Brasil vive de imposto."),
+            # "e-mail" não é o "e" que puxa a pergunta (3ª rodada do juiz).
+            ("Ou seja, e-mail de alerta cai direto na fila?", "Ou seja, e-mail de alerta cai direto na fila."),
             ("Quer dizer, não precisa mais do Docker?", "Quer dizer, não precisa mais do Docker."),
         ])
 
@@ -382,8 +382,8 @@ class TestNeDePausaNaLimpeza(unittest.TestCase):
         self.assertEqual("Do you know? I don't.", TextProcessor.clean_filler_words("Do you know? I don't."))
 
 
-class TestCasosReaisDoDono(_Casos):
-    """Os trechos do histórico do dono que o pedido do Bloco 8 cita."""
+class TestTagConclusaoESimOuNao(_Casos):
+    """Tag de confirmação, conclusões no meio da explicação e pergunta de sim ou não."""
 
     def test_tag_certo_no_fim_da_explicacao(self):
         self._conferir([(
@@ -395,8 +395,8 @@ class TestCasosReaisDoDono(_Casos):
         self._conferir([
             ("Ou seja, depois que eu pagar o frete, não vai sobrar muito, assim, mesmo se eu buscasse sem pagar o frete?",
              "Ou seja, depois que eu pagar o frete, não vai sobrar muito, assim, mesmo se eu buscasse sem pagar o frete."),
-            ("Então, pelo que eu estou entendendo, hoje, o e-commerce brasileiro, ele vive de imposto?",
-             "Então, pelo que eu estou entendendo, hoje, o e-commerce brasileiro, ele vive de imposto."),
+            ("Então, pelo que eu estou entendendo, hoje, o e-mail de alerta, ele cai direto na fila?",
+             "Então, pelo que eu estou entendendo, hoje, o e-mail de alerta, ele cai direto na fila."),
         ])
 
     def test_pergunta_de_sim_ou_nao_fica_para_o_refino(self):

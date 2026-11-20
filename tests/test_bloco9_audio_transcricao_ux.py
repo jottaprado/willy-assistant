@@ -555,6 +555,13 @@ class TestVocabulario(unittest.TestCase):
         # E no começo da lista: o corte do orçamento tira o fim.
         self.assertIn("Willy", self.store.build_prompt_context(DEV_PROMPT_CONTEXT, ["X" * 700], {}, 850))
 
+    def test_vocabulario_padrao_vazio_depois_do_comentario_personalizado(self):
+        marcador = "# Adicione seus termos e nomes personalizados aqui embaixo:"
+        with open(os.path.join(RAIZ, "vocabulario.txt"), encoding="utf-8") as f:
+            conteudo = f.read()
+        self.assertIn(marcador, conteudo)
+        self.assertEqual("", conteudo.split(marcador, 1)[1].strip())
+
     def test_cabecalho_bilingue_em_portugues(self):
         self.assertIn("Vocabulário bilíngue", DEV_PROMPT_CONTEXT_BILINGUAL)
         self.assertNotIn("Bilingual", DEV_PROMPT_CONTEXT_BILINGUAL)
