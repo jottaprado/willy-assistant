@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+dist_package/
+dist_installer/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.venv/
+.venv*/
+venv/
+ENV/
+env/
+.coverage
+
+# Secrets and environment variables
+.env
+.env.local
+.env.*.local
+!.env.template
+
+# User local data and history
+.history.json
+.replacements.json
+.app_rules.json
+.snippets.json
+*.profile.json
+.show_dashboard
+*.corrompido-*
+
+# Logs, scratch and terminal outputs
+*.log
+stdout*.txt
+stderr*.txt
+willy_tts_*.txt
+
+# Temporary audio files
+*.wav
+*.mp3
+temp_*.wav
+# Fila de áudios à espera de reenvio (rodando do código-fonte, fica na raiz)
+failed/
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+AUDITORIA.md
+

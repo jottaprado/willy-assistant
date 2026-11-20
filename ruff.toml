@@ -1,0 +1,13 @@
+target-version = "py312"
+line-length = 120
+
+[lint]
+ignore = [
+    # Aplicação desktop local: timestamps persistidos em .history.json e exibidos na UI usam hora local naive por contrato.
+    "DTZ005",
+    "DTZ007",
+]
+
+[lint.per-file-ignores]
+# Os testes de contrato e isolamento extraem funções de willy.py via AST e as compilam com exec() em escopo controlado.
+"tests/*.py" = ["S102"]

@@ -1,0 +1,77 @@
+# -------------------------------------------------------------
+# Dicionário de Vocabulário Personalizado do Willy
+# -------------------------------------------------------------
+# Adicione abaixo palavras, nomes de projetos, siglas, termos da sua
+# empresa ou bibliotecas que o Willy deve sempre reconhecer perfeitamente.
+#
+# Regras simples:
+# - Linhas iniciadas com '#' são comentários e ignoradas.
+# - Escreva uma palavra ou termo técnico por linha ou separados por vírgula.
+# - Salve o arquivo e o Willy recarregará automaticamente!
+# -------------------------------------------------------------
+
+# O assistente
+Willy
+
+# Linguagens & Frameworks
+TypeScript
+JavaScript
+Python
+React
+Next.js
+Vue
+Angular
+TailwindCSS
+Node.js
+Docker
+Kubernetes
+
+# Desenvolvimento & Arquitetura
+API
+endpoint
+webhook
+middleware
+backend
+frontend
+fullstack
+microservices
+database
+PostgreSQL
+MongoDB
+Redis
+SQL
+GraphQL
+
+# Ferramentas & Versionamento
+Git
+GitHub
+pull request
+PR
+commit
+merge
+branch
+rebase
+deploy
+CI/CD
+VS Code
+Antigravity
+Cursor
+
+# Inteligência Artificial & LLMs
+Groq
+Whisper
+Llama
+OpenAI
+Claude
+Gemini
+prompt
+token
+context window
+fine-tuning
+RAG
+embedding
+
+# Adicione seus termos e nomes personalizados aqui embaixo:
+Jotta
+Prado
+

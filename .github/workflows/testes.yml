@@ -1,0 +1,38 @@
+name: testes
+
+# A suite pegou, so nesta branch, dois crashes certos, tres bugs de captacao de audio,
+# nove rotulos ilegiveis e quatro regressoes de review. Ate aqui ela so rodava quando
+# alguem lembrava.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unittest:
+    # windows-latest e obrigatorio, nao preferencia: o projeto usa atalhos Win32 nativos
+    # (core/hotkey.py), bandeja do Windows e TTS por cscript/SAPI. Parte da suite instancia
+    # janelas Tk de verdade, entao tambem precisa de sessao grafica.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "ruff>=0.8.0,<1.0.0"
+
+      - name: Rodar o linter (Ruff)
+        run: ruff check .
+
+      - name: Rodar a suite
+        # Nao ha pytest no projeto: os testes sao unittest.TestCase e e assim que rodam.
+        run: python -m unittest discover -s tests -v
