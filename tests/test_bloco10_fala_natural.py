@@ -1,7 +1,7 @@
 """
-Bloco 10, fase 1: a fala natural do dono vira texto limpo, e o ditado longo não leva mais 413.
+Bloco 10, fase 1: a fala natural vira texto limpo, e o ditado longo não leva mais 413.
 
-Nos ditados do dono (o .history.json citado no pedido do Bloco 10) passavam para o texto final:
+Fenômenos de fala espontânea que passavam para o texto final:
 - gaguejos de palavras fora da lista curta de 43 ("pesquisa Pesquisa a loja", "até até dois ou
   três arquivos", "consegue, consegue me dar um exemplo?", "Gostei, Gostei"), e o começo de
   palavra largado ("O, oi, Willy");

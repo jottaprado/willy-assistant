@@ -78,9 +78,9 @@ CASOS_DA_GROQ = [
     ("Ok, a última versão está instalada no meu computador. Outra coisa, o atalho de desfazer parou de responder.",
      [("meu computador", "?"), ("parou de responder", ".")]),
     (("Ou seja, depois que eu pagar o frete, não vai sobrar muito, assim, mesmo se eu buscasse sem pagar o frete? "
-      "Então, pelo que eu estou entendendo, hoje, o e-commerce brasileiro, ele vive de imposto? "
+      "Então, pelo que eu estou entendendo, hoje, o e-mail de alerta, ele cai direto na fila? "
       "Então ou é da fábrica ou é da Bahia, certo."),
-     [("sem pagar o frete", "."), ("vive de imposto", "."), ("da Bahia, certo", "?")]),
+     [("sem pagar o frete", "."), ("direto na fila", "."), ("da Bahia, certo", "?")]),
     ("Eu estava olhando o código aqui, né? E vi que o teste do instalador estava quebrado.",
      [("código aqui", "."), ("estava quebrado", ".")]),
     ("A gente pode cachear o resultado por cinco minutos, faz sentido.", [("faz sentido", "?")]),

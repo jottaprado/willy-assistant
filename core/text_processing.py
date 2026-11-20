@@ -117,8 +117,8 @@ _PERGUNTA_INDIRETA = re.compile(
     r'\s+(?:se|o\s+que|como|qual|quais|quando|onde|por\s+que|quem|quanto|quantos|quantas)\b',
     re.IGNORECASE)
 
-# Conclusão de quem fala ("Ou seja, não vai sobrar muito?"; "Então, pelo que eu estou entendendo,
-# ele vive de imposto?"): afirmação, por decisão do dono, mesmo soando como pedido de confirmação.
+# Conclusão de quem fala ("Ou seja, não vai sobrar muito?", "Então, pelo que eu estou entendendo,
+# o e-mail de alerta cai direto na fila?"): afirmação, mesmo soando como pedido de confirmação.
 # O refino recebia a instrução e mantinha o "?" (medido na Groq). Fica pergunta a que fala com
 # "você", a que termina numa tag e a que, depois da abertura, pergunta de fato: com palavra de
 # pergunta ("Ou seja, o que eu faço agora?"; "Ou seja, por quê?"), com alternativa ("Ou seja, pago
@@ -213,7 +213,7 @@ def _casar_identificador(text: str) -> tuple[str, str] | None:
 
 
 # --- Fala natural: gaguejo, retratação e maiúscula depois da vírgula (Bloco 10) ---------------
-# Nos ditados do dono, a mesma palavra repetida por hesitação passava para o texto ("pesquisa
+# Na fala espontânea, a mesma palavra repetida por hesitação passava para o texto ("pesquisa
 # Pesquisa a loja", "até até dois ou três arquivos", "consegue, consegue me dar", "Gostei,
 # Gostei"): a limpeza só conhecia 43 palavras curtas (29 em português, 14 em inglês), e exigia
 # espaço antes da vírgula.
