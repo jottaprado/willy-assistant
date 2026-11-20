@@ -72,6 +72,4 @@ RAG
 embedding
 
 # Adicione seus termos e nomes personalizados aqui embaixo:
-Jotta
-Prado
 
