@@ -6,4 +6,4 @@ tests/test_versao.py reprova qualquer número de versão escrito à mão em outr
 Fica na raiz e sem imports para que core/ e ui/ possam ler sem import circular.
 """
 
-__version__ = "1.14.1"
+__version__ = "1.14.2"
