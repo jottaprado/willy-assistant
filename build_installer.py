@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import zipfile
+import zlib
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # --sem-instalar: só gera dist/Willy, sem copiar por cima de %LOCALAPPDATA%\Programs\Willy.
@@ -84,25 +86,89 @@ def _conferir_sem_caminho_da_maquina(dist_dir: str, casa: str) -> None:
 
     Procura a pasta do usuário (C:\\Users\\<nome>) seguida de uma barra, com barra, contrabarra
     ou a contrabarra escapada de JSON e TOML, em qualquer caixa, em ASCII e em UTF-16. O
-    instalador é público: foi assim que
-    109 .pyc com esse caminho chegaram às releases sem ninguém ver. O caminho da máquina de quem
-    compilou uma wheel de terceiros (C:/Users/runneradmin) não é desta máquina e passa.
+    instalador é público: foi assim que 109 .pyc com esse caminho chegaram às releases sem
+    ninguém ver. Também abre todo .zip de dist/Willy e descomprime os blocos zlib do Willy.exe,
+    exigindo um controle positivo (core\\config.py e willy.py) para garantir que a varredura
+    enxerga o código empacotado. O caminho da máquina de quem compilou uma wheel de terceiros
+    (C:/Users/runneradmin) não é desta máquina e passa.
     """
     base = casa.rstrip("\\/").lower()
     alvos = [(base.replace("\\", barra).replace("/", barra) + barra).encode(codificacao)
              for barra in ("\\", "/", "\\\\") for codificacao in ("utf-8", "utf-16-le")]
+    controles_exe = (b"core\\config.py", b"willy.py")
+    segundo_byte_zlib = {0x01, 0x5E, 0x9C, 0xDA}
     achados = []
+    controles_ausentes = []
     for pasta, _, arquivos in os.walk(dist_dir):
         for nome in arquivos:
             caminho = os.path.join(pasta, nome)
+            rel = os.path.relpath(caminho, dist_dir)
             with open(caminho, "rb") as f:
-                conteudo = f.read().lower()
-            if any(alvo in conteudo for alvo in alvos):
-                achados.append(os.path.relpath(caminho, dist_dir))
+                bruto = f.read()
+            if any(alvo in bruto.lower() for alvo in alvos):
+                achados.append(rel)
+            if nome.lower().endswith(".zip"):
+                with zipfile.ZipFile(caminho, "r") as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        membro = zf.read(info.filename).lower()
+                        if any(alvo in membro for alvo in alvos):
+                            achados.append(f"{rel}!{info.filename}")
+            if rel.lower() == "willy.exe":
+                mv = memoryview(bruto)
+                tam = len(bruto)
+                pos = 0
+                bloco_num = 0
+                vistos = set()
+                while pos < tam - 1:
+                    idx = bruto.find(b"\x78", pos)
+                    if idx < 0 or idx + 1 >= tam:
+                        break
+                    if bruto[idx + 1] not in segundo_byte_zlib:
+                        pos = idx + 1
+                        continue
+                    dec = zlib.decompressobj()
+                    partes = []
+                    cursor = idx
+                    bloco_ok = False
+                    consumidos = 1
+                    try:
+                        while cursor < tam and not dec.eof:
+                            fim = min(cursor + 65536, tam)
+                            pedaco = dec.decompress(mv[cursor:fim])
+                            if pedaco:
+                                partes.append(pedaco)
+                            cursor = fim
+                        if dec.eof:
+                            resto = dec.flush()
+                            if resto:
+                                partes.append(resto)
+                            consumidos = (cursor - idx) - len(dec.unused_data)
+                            bloco_ok = True
+                    except zlib.error:
+                        bloco_ok = False
+                    if bloco_ok:
+                        bloco_num += 1
+                        saida_low = b"".join(partes).lower()
+                        if any(alvo in saida_low for alvo in alvos):
+                            achados.append(f"{rel} (bloco zlib #{bloco_num})")
+                        for ctrl in controles_exe:
+                            if ctrl in saida_low:
+                                vistos.add(ctrl)
+                        pos = idx + max(1, consumidos)
+                    else:
+                        pos = idx + 1
+                faltando = [c.decode("ascii") for c in controles_exe if c not in vistos]
+                if faltando:
+                    controles_ausentes.append((rel, faltando))
     if achados:
         lista = "\n   ".join(sorted(achados))
         raise SystemExit(f"❌ {len(achados)} arquivo(s) de {dist_dir} levam o caminho {casa}, "
                          f"e nada foi empacotado nem instalado:\n   {lista}")
+    if controles_ausentes:
+        detalhe = ", ".join(f"{rel} sem {', '.join(falt)}" for rel, falt in controles_ausentes)
+        raise SystemExit(f"❌ Controle positivo da varredura zlib falhou em {dist_dir} ({detalhe}).")
 
 
 def _achar_iscc():
