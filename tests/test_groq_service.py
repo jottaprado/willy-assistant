@@ -323,18 +323,19 @@ class TestRecusaDoLLMNaoSubstituiDitado(unittest.TestCase):
     """Proteção contra o LLM substituir o ditado por recusa de assistente com HTTP 200."""
 
     PROMPT_DITADO_1 = (
-        "Leia os chamados abertos de hoje, identifique as mensagens que ainda não foram "
-        "respondidas, consulte o histórico da semana para entender o meu tom e responda "
-        "cada mensagem pendente por mim."
+        "Inspecione os arquivos de log gerados na última compilação do servidor de integração, "
+        "agrupe os erros por módulo afetado, compare com o relatório da semana passada e monte "
+        "um roteiro objetivo de correção para a equipe de infraestrutura executar amanhã."
     )
     PROMPT_DITADO_2 = (
-        "Verifique as conversas pendentes no chat do suporte, filtre os pedidos urgentes "
-        "e responda por mim com atenção e cordialidade, seguindo exatamente o estilo das "
-        "minhas respostas anteriores."
+        "Compare as tabelas do banco de homologação com o esquema de produção atual, liste "
+        "todas as colunas divergentes ou índices ausentes e gere o roteiro completo de migração "
+        "incremental com validação automática antes de aplicar qualquer alteração."
     )
     RECUSA_PT = "Desculpe, mas não posso ajudar com isso."
     RECUSA_EN = "I'm sorry, but I can't help with that."
     RECUSA_ES = "Lo siento, pero no puedo ayudar con eso."
+    META_RECUSA_PT = "Como uma IA, não posso acessar suas mensagens privadas."
 
     def _servico(self, efeitos, modelo=modelos_llm.SMART):
         servico = GroqService(api_key="gsk_teste", llm_model=modelo)
@@ -390,7 +391,7 @@ class TestRecusaDoLLMNaoSubstituiDitado(unittest.TestCase):
         servico_sem_estrito, _ = self._servico([_resposta(self.RECUSA_PT)] * 3)
         self.assertEqual(self.PROMPT_DITADO_1, servico_sem_estrito.refine_text(self.PROMPT_DITADO_1))
 
-        # Caminho real do pipeline: com recusa em todos os modelos, cola o texto original e nunca a recusa.
+        # Caminho real do pipeline: com recusa em todos os modelos, cola o texto original e avisa recusa.
         harness = _Pipeline()
         harness.setUp()
         self.addCleanup(harness.tearDown)
@@ -406,6 +407,11 @@ class TestRecusaDoLLMNaoSubstituiDitado(unittest.TestCase):
         colado = harness.injector.paste_text.call_args.args[0]
         self.assertEqual(self.PROMPT_DITADO_1, colado)
         self.assertNotIn("Desculpe", colado)
+        estado_ui, msg_ui = harness.ui[-1]
+        self.assertEqual("error", estado_ui)
+        self.assertIn("recusou", msg_ui.lower())
+        self.assertNotIn("não respondeu", msg_ui.lower())
+        self.assertLessEqual(len(msg_ui), 45)
 
     def test_eh_recusa_do_llm_detecta_variacoes_pt_en_es_e_duas_frases(self):
         from core.groq_service import eh_recusa_do_llm
@@ -415,10 +421,12 @@ class TestRecusaDoLLMNaoSubstituiDitado(unittest.TestCase):
             "Desculpa, não consigo ajudar com isso.",
             "Desculpe, mas não posso ajudar com isso. Posso ajudar em outra coisa?",
             "Sinto muito, mas não posso atender a essa solicitação.",
+            "Infelizmente não posso atender a essa solicitação.",
             "Não posso ajudar com isso.",
             "Como uma IA, não posso acessar suas mensagens privadas.",
             "Desculpe, mas não posso responder mensagens em seu nome.",
             "I'm sorry, but I can't help with that.",
+            "I'm sorry, but I can't help with that request.",
             "I cannot fulfill this request.",
             "I'm sorry, I cannot assist with that. Let me know if you need anything else.",
             "As an AI, I cannot access private messages.",
@@ -433,23 +441,23 @@ class TestRecusaDoLLMNaoSubstituiDitado(unittest.TestCase):
             with self.subTest(frase=frase):
                 self.assertTrue(eh_recusa_do_llm(frase, self.PROMPT_DITADO_1))
         # Pedido imperativo curto (4 palavras) recusado com 7 palavras também é detectado.
-        self.assertTrue(eh_recusa_do_llm(self.RECUSA_PT, "Leia minhas conversas privadas"))
+        self.assertTrue(eh_recusa_do_llm(self.RECUSA_PT, "Audite os logs internos"))
 
     def test_controles_negativos_nao_sao_classificados_como_recusa(self):
         from core.groq_service import eh_recusa_do_llm
 
-        desculpa_falada = "Tudo ótimo por aqui. Desculpa a demora para responder, estava em uma reunião longa."
-        nao_consigo_prosa = "Boa tarde, revisei o relatório mas eu não consigo apagar as versões antigas do painel."
-        fala_sobre_recusa = (
-            "O assistente de voz acabou de pegar uma frase minha e responder pedindo desculpa "
-            "dizendo que não consegue ajudar com isso, mas eu não ditei essa frase de recusa, "
-            "eu estava apenas ditando instruções para outra ferramenta executar a tarefa de "
-            "organizar os chamados da equipe durante a manhã."
+        desculpa_falada = "Bom dia pessoal, peço desculpas pelo atraso na entrega do relatório trimestral da fábrica."
+        nao_consigo_prosa = "Boa tarde, revisei a planilha mas eu não consigo apagar os registros antigos do almoxarifado."
+        fala_sobre_tela = (
+            "Ontem durante a simulação do módulo de faturamento apareceu uma caixa vermelha "
+            "avisando que o servidor rejeitou a operação automática por falta de certificado "
+            "digital válido no ambiente de testes, então precisamos renovar a credencial antes "
+            "de liberar o pacote para o setor financeiro."
         )
         recusa_curta_ditada = "Desculpe, mas não posso ajudar com isso hoje."
         recusa_curta_exata = "Desculpe, mas não posso ajudar com isso."
 
-        for texto in (desculpa_falada, nao_consigo_prosa, fala_sobre_recusa, recusa_curta_ditada, recusa_curta_exata):
+        for texto in (desculpa_falada, nao_consigo_prosa, fala_sobre_tela, recusa_curta_ditada, recusa_curta_exata):
             with self.subTest(controle=texto[:40]):
                 self.assertFalse(eh_recusa_do_llm(texto, texto))
                 servico, cliente = self._servico([_resposta(texto)])
@@ -457,28 +465,194 @@ class TestRecusaDoLLMNaoSubstituiDitado(unittest.TestCase):
                 self.assertEqual([modelos_llm.SMART], self._modelos(cliente))
 
         # Resumo legítimo com objeto específico não pode ser confundido com recusa de assistente.
-        email_longo = " ".join(["texto"] * 40)
+        texto_longo = " ".join(["relatorio"] * 40)
         self.assertFalse(eh_recusa_do_llm(
-            "Infelizmente não consigo ajudar com o transporte dos móveis.", email_longo
+            "Infelizmente não consigo ajudar com o transporte dos móveis.", texto_longo
         ))
-        self.assertFalse(eh_recusa_do_llm("Não posso responder agora, estou em reunião.", email_longo))
+        self.assertFalse(eh_recusa_do_llm("Não posso responder agora, estou em reunião.", texto_longo))
 
-        # Se o modelo trocar a fala longa sobre recusa por uma recusa curta, deve bloquear,
+        # Se o modelo trocar uma fala longa por uma recusa curta, deve bloquear,
         # mesmo quando a própria entrada longa já continha uma recusa em primeira pessoa.
-        self.assertTrue(eh_recusa_do_llm(self.RECUSA_PT, fala_sobre_recusa))
+        self.assertTrue(eh_recusa_do_llm(self.RECUSA_PT, fala_sobre_tela))
         fala_longa_com_recusa_em_primeira_pessoa = (
-            "Eu respondi no chamado dizendo desculpe, mas não posso ajudar com isso, e em seguida "
-            "detalhei todo o procedimento técnico que a equipe precisa seguir na próxima janela de "
-            "manutenção programada para resolver o problema sem interromper o serviço."
+            "Na reunião de logística expliquei que não posso ajudar com isso, e logo depois "
+            "detalhei o cronograma completo de manutenção preventiva das empilhadeiras que a "
+            "oficina precisa concluir antes do inventário anual do depósito central."
         )
         self.assertTrue(eh_recusa_do_llm(self.RECUSA_PT, fala_longa_com_recusa_em_primeira_pessoa))
 
-        # Tradução legítima de uma recusa falada pela pessoa deve passar sem falso positivo.
+        # Tradução legítima de uma recusa falada pela pessoa deve passar sem retentativa.
         self.assertFalse(eh_recusa_do_llm(self.RECUSA_EN, recusa_curta_exata))
         self.assertFalse(eh_recusa_do_llm(self.RECUSA_ES, recusa_curta_exata))
 
+    def test_lacunas_de_mutacao_n12_n14_n15(self):
+        from core.groq_service import eh_recusa_do_llm
+
+        # N14: resposta legítima acima de 30 palavras com frase de recusa dentro não é recusa do LLM.
+        entrada_sem_recusa = (
+            "Resuma o parecer do departamento jurídico sobre a proposta de parceria comercial "
+            "apresentada pela fornecedora de sensores industriais na reunião de ontem à tarde."
+        )
+        resposta_35_palavras = (
+            "O parecer jurídico registrou que o contrato atual impede repassar dados brutos de "
+            "telemetria sem aditivo formal. No encerramento do memorando, o diretor escreveu: "
+            "Desculpe, mas não posso ajudar com isso. A revisão segue agendada para segunda."
+        )
+        self.assertGreater(len(resposta_35_palavras.split()), 30)
+        self.assertFalse(eh_recusa_do_llm(resposta_35_palavras, entrada_sem_recusa))
+        servico_n14, cliente_n14 = self._servico([_resposta(resposta_35_palavras)])
+        self.assertEqual(resposta_35_palavras, servico_n14.refine_text(entrada_sem_recusa, estrito=True))
+        self.assertEqual([modelos_llm.SMART], self._modelos(cliente_n14))
+
+        # N12: transform_text passa entrada=base_text para não inflar contagem com a instrução longa.
+        servico_n12, cliente_n12 = self._servico([_resposta("Infelizmente, não posso ajudar com isso.")])
+        saida_n12 = servico_n12.transform_text(
+            "Não posso ajudar com isso.",
+            "reescreva esta frase curta em tom mais formal e adequado para enviar no portal corporativo hoje",
+            estrito=True,
+        )
+        self.assertEqual("Infelizmente, não posso ajudar com isso.", saida_n12)
+        self.assertEqual([modelos_llm.SMART], self._modelos(cliente_n12))
+
+        # N15: aspas envolvendo tags vazias não passam pelo retorno interno de refine_text.
+        servico_n15, _ = self._servico([_resposta('"<transcricao></transcricao>"')])
+        with self.assertRaises(FalhaDoLLM) as ctx_n15:
+            servico_n15.refine_text(self.PROMPT_DITADO_1, estrito=True)
+        self.assertEqual("refino", ctx_n15.exception.etapa)
+        self.assertEqual(self.PROMPT_DITADO_1, ctx_n15.exception.reserva)
+
+    def test_transformar_e_acao_entregam_recusa_educada_confirmada_pelo_coder(self):
+        from core.groq_service import RecusaDoLLM
+
+        email_pt = (
+            "Olá, gostaríamos de solicitar um desconto de 30% na renovação do plano anual "
+            "da nossa assinatura corporativa para o próximo exercício."
+        )
+        email_en = (
+            "Hello, we would like to request a 30% discount on the annual renewal "
+            "of our commercial subscription for the upcoming fiscal year."
+        )
+        casos = (
+            (email_pt, "responda recusando educadamente", "Desculpe, mas não posso atender a esse pedido."),
+            (email_pt, "responda recusando educadamente", "Infelizmente não posso atender a essa solicitação."),
+            (email_en, "reply declining politely in English", "I'm sorry, but I can't help with that request."),
+        )
+        for email, comando, resposta_educada in casos:
+            with self.subTest(fluxo="transform_text", resposta=resposta_educada):
+                servico, cliente = self._servico([_resposta(resposta_educada)] * 3)
+                self.assertEqual(resposta_educada, servico.transform_text(email, comando, estrito=True))
+                self.assertEqual(
+                    [modelos_llm.SMART, modelos_llm.FLASH, modelos_llm.CODER],
+                    self._modelos(cliente),
+                )
+            with self.subTest(fluxo="process_action", resposta=resposta_educada):
+                servico, cliente = self._servico([_resposta(resposta_educada)] * 3)
+                self.assertEqual(resposta_educada, ActionManager.process_action(comando, servico, email))
+                self.assertEqual(
+                    [modelos_llm.SMART, modelos_llm.FLASH, modelos_llm.CODER],
+                    self._modelos(cliente),
+                )
+
+        # Simetria quando o modelo configurado já é o CODER: confirmação no SMART (2ª família) entrega.
+        servico_coder, cliente_coder = self._servico(
+            [_resposta("Desculpe, mas não posso atender a esse pedido.")] * 2,
+            modelo=modelos_llm.CODER,
+        )
+        self.assertEqual(
+            "Desculpe, mas não posso atender a esse pedido.",
+            servico_coder.transform_text(email_pt, "responda recusando educadamente", estrito=True),
+        )
+        self.assertEqual([modelos_llm.CODER, modelos_llm.SMART], self._modelos(cliente_coder))
+
+        # Sem confirmação na 2ª família (CODER indisponível) ou com meta-recusa explícita de IA, continua bloqueando.
+        for efeitos in (
+            [_resposta(self.RECUSA_PT), _resposta(self.RECUSA_PT), _http(groq.NotFoundError, 404)],
+            [_resposta(self.META_RECUSA_PT)] * 3,
+        ):
+            with self.subTest(caso="bloqueia_transform", primeiro=type(efeitos[-1]).__name__):
+                servico, _ = self._servico(efeitos)
+                with self.assertRaises(FalhaDoLLM) as ctx:
+                    servico.transform_text(email_pt, "deixe formal", estrito=True)
+                self.assertEqual("transformar", ctx.exception.etapa)
+                self.assertIsInstance(ctx.exception.causa, RecusaDoLLM)
+            with self.subTest(caso="bloqueia_acao", primeiro=type(efeitos[-1]).__name__):
+                servico, _ = self._servico(efeitos)
+                with self.assertRaises(FalhaDoLLM) as ctx:
+                    ActionManager.process_action("resuma a solicitação", servico, email_pt)
+                self.assertEqual("acao", ctx.exception.etapa)
+                self.assertIsInstance(ctx.exception.causa, RecusaDoLLM)
+
+    def test_aviso_da_pilula_diz_que_a_ia_recusou_nas_cinco_etapas(self):
+        from core.groq_service import RecusaDoLLM
+        from core.pipeline import PipelineContext
+        from core.pipeline.transcription_pipeline import _AVISO_DA_RECUSA, _NADA_A_COLAR_RECUSA
+        from tests.test_fila_audio_falho import _Pipeline
+        from tests.test_velocidade_medida import _wav
+
+        for etapa, (_st, msg, _curto) in _AVISO_DA_RECUSA.items():
+            with self.subTest(tabela="aviso_recusa", etapa=etapa):
+                self.assertIn("recusou", msg.lower())
+                self.assertNotIn("não respondeu", msg.lower())
+                self.assertLessEqual(len(msg), 45)
+        for etapa, msg in _NADA_A_COLAR_RECUSA.items():
+            with self.subTest(tabela="nada_a_colar_recusa", etapa=etapa):
+                self.assertIn("recusou", msg.lower())
+                self.assertNotIn("não respondeu", msg.lower())
+                self.assertLessEqual(len(msg), 45)
+
+        # 1. Ação pelo caminho real do pipeline (Willy, ...) com recusa não confirmada / meta-recusa.
+        h_acao = _Pipeline()
+        h_acao.setUp()
+        self.addCleanup(h_acao.tearDown)
+        servico_acao, _ = self._servico([_resposta(self.META_RECUSA_PT)] * 3)
+        h_acao.groq_service = servico_acao
+        h_acao.pipeline.groq_service = servico_acao
+        with patch.object(servico_acao, "transcribe", return_value="Willy, explique o erro do certificado"), \
+                patch.object(ActionManager, "get_selected_text", return_value="Log de erro do servidor."):
+            h_acao.pipeline.process(PipelineContext(
+                wav_bytes=_wav(2.0), modo="transcribe",
+                app_context=("code.exe", "editor", "general"),
+            ))
+        h_acao.injector.paste_text.assert_not_called()
+        self.assertEqual(("error", _NADA_A_COLAR_RECUSA["acao"]), h_acao.ui[-1])
+
+        # 2. Transformar (Ctrl+Alt+T) com meta-recusa.
+        h_tr = _Pipeline()
+        h_tr.setUp()
+        self.addCleanup(h_tr.tearDown)
+        servico_tr, _ = self._servico([_resposta(self.META_RECUSA_PT)] * 3)
+        h_tr.pipeline.groq_service = servico_tr
+        with patch.object(servico_tr, "transcribe", return_value="deixe mais formal"):
+            h_tr.pipeline.process(PipelineContext(
+                wav_bytes=_wav(2.0), modo="transform", selected_text="Texto selecionado para teste.",
+                app_context=("code.exe", "editor", "general"),
+            ))
+        h_tr.injector.paste_text.assert_not_called()
+        self.assertEqual(("error", _NADA_A_COLAR_RECUSA["transformar"]), h_tr.ui[-1])
+
+        # 3. Prompt de agente e Tradução ES com recusa em todos os modelos.
+        for modo, etapa, fala in (
+            ("prompt", "prompt", self.PROMPT_DITADO_1),
+            ("translate_es", "traducao_es", self.PROMPT_DITADO_1),
+        ):
+            with self.subTest(modo=modo):
+                h = _Pipeline()
+                h.setUp()
+                self.addCleanup(h.tearDown)
+                servico_m, _ = self._servico([_resposta(self.RECUSA_PT)] * 3)
+                h.pipeline.groq_service = servico_m
+                with patch.object(servico_m, "transcribe", return_value=fala):
+                    h.pipeline.process(PipelineContext(
+                        wav_bytes=_wav(2.0), modo=modo,
+                        app_context=("code.exe", "editor", "general"),
+                    ))
+                h.injector.paste_text.assert_called_once()
+                self.assertEqual(fala, h.injector.paste_text.call_args.args[0])
+                self.assertEqual(("error", _AVISO_DA_RECUSA[etapa][1]), h.ui[-1])
+                self.assertIsInstance(h.pipeline._falha_llm.causa, RecusaDoLLM)
+
     def test_refine_text_delimita_com_transcricao_e_remove_tags_ecoadas(self):
-        texto = "Leia os tickets abertos de hoje e liste os pendentes."
+        texto = "Liste os módulos com cobertura abaixo de oitenta por cento."
         servico, cliente = self._servico([_resposta(f"<transcricao>\n{texto}\n</transcricao>")])
         saida = servico.refine_text(texto, estrito=True)
         self.assertEqual(texto, saida)
@@ -507,17 +681,17 @@ class TestRecusaDoLLMNaoSubstituiDitado(unittest.TestCase):
         self.assertIn("sem recusar nem pedir desculpas", _PROMPT_DA_TRADUCAO_ES)
         self.assertIn("sem recusar nem pedir desculpas", _PROMPT_DA_TRADUCAO_EN)
 
-        prompt_valido = "/goal \"Revisar fila de atendimento\"\n\nFase 1: mapear chamados abertos e priorizar."
+        prompt_valido = "/goal \"Auditar logs do servidor\"\n\nFase 1: mapear falhas recentes e gerar roteiro."
         ata_valida = "## Ata Executiva da Reunião\n- Decisão principal registrada."
-        transcricao_reuniao = "Decidimos revisar os chamados pendentes hoje e responder cada cliente com prioridade."
+        transcricao_reuniao = "Decidimos auditar os logs de integração hoje e corrigir os alertas críticos."
 
         etapas_com_recuperacao = (
-            ("traducao_es", lambda s: s.translate_to_spanish(self.PROMPT_DITADO_1, estrito=True), "Lee los tickets."),
-            ("traducao_en", lambda s: s.translate_to_english(self.PROMPT_DITADO_1, estrito=True), "Read the tickets."),
+            ("traducao_es", lambda s: s.translate_to_spanish(self.PROMPT_DITADO_1, estrito=True), "Inspecciona los logs."),
+            ("traducao_en", lambda s: s.translate_to_english(self.PROMPT_DITADO_1, estrito=True), "Inspect the logs."),
             ("transformar", lambda s: s.transform_text(self.PROMPT_DITADO_1, "deixe formal", estrito=True), "Texto formal."),
             ("ata", lambda s: s.summarize_meeting(transcricao_reuniao, estrito=True), ata_valida),
             ("prompt", lambda s: s.generate_agent_prompt(self.PROMPT_DITADO_1, estrito=True), prompt_valido),
-            ("acao", lambda s: ActionManager.process_action("resuma a mensagem", s, self.PROMPT_DITADO_1), "Resumo pronto."),
+            ("acao", lambda s: ActionManager.process_action("resuma o roteiro", s, self.PROMPT_DITADO_1), "Resumo pronto."),
         )
         for nome, chamar, resposta_coder in etapas_com_recuperacao:
             with self.subTest(etapa=nome, caso="recupera_no_coder"):
@@ -533,14 +707,13 @@ class TestRecusaDoLLMNaoSubstituiDitado(unittest.TestCase):
                     self._modelos(cliente),
                 )
 
-        etapas_falha_estrita = (
+        etapas_estritas_em_recusa_total = (
             ("traducao_es", lambda s: s.translate_to_spanish(self.PROMPT_DITADO_1, estrito=True), self.PROMPT_DITADO_1),
             ("traducao_en", lambda s: s.translate_to_english(self.PROMPT_DITADO_1, estrito=True), self.PROMPT_DITADO_1),
-            ("transformar", lambda s: s.transform_text(self.PROMPT_DITADO_1, "deixe formal", estrito=True), self.PROMPT_DITADO_1),
             ("ata", lambda s: s.summarize_meeting(transcricao_reuniao, estrito=True), transcricao_reuniao),
             ("prompt", lambda s: s.generate_agent_prompt(self.PROMPT_DITADO_1, estrito=True), self.PROMPT_DITADO_1),
         )
-        for etapa, chamar, reserva in etapas_falha_estrita:
+        for etapa, chamar, reserva in etapas_estritas_em_recusa_total:
             with self.subTest(etapa=etapa, caso="todos_recusam"):
                 servico, cliente = self._servico([_resposta(self.RECUSA_PT)] * 3)
                 with self.assertRaises(FalhaDoLLM) as ctx:
@@ -552,15 +725,7 @@ class TestRecusaDoLLMNaoSubstituiDitado(unittest.TestCase):
                     self._modelos(cliente),
                 )
 
-        # ActionManager.process_action devolve None em recusa total, sem colar a recusa.
-        servico_acao, cliente_acao = self._servico([_resposta(self.RECUSA_PT)] * 3)
-        self.assertIsNone(ActionManager.process_action("resuma a mensagem", servico_acao, self.PROMPT_DITADO_1))
-        self.assertEqual(
-            [modelos_llm.SMART, modelos_llm.FLASH, modelos_llm.CODER],
-            self._modelos(cliente_acao),
-        )
-
-        # ActionManager com recusa legítima selecionada para traduzir não gera falso positivo.
+        # ActionManager com recusa legítima selecionada para traduzir passa na 1ª chamada.
         servico_trad, cliente_trad = self._servico([_resposta(self.RECUSA_EN)])
         self.assertEqual(
             self.RECUSA_EN,
