@@ -477,7 +477,7 @@ class ActionManager:
         if not command or not groq_service.client:
             return None
 
-        from core.groq_service import ERROS_PASSAGEIROS, FalhaDoLLM
+        from core.groq_service import ERROS_PASSAGEIROS, FalhaDoLLM, RecusaDoLLM
 
         # Rota especializada para prompts e missões executivas de agentes (/goal, maestro, loop)
         if re.search(r'\b(?:prompt|miss[aã]o|goal|agente|maestro)\b', command, re.IGNORECASE):
@@ -491,6 +491,8 @@ class ActionManager:
             except FalhaDoLLM as falha:
                 if falha.transitoria and falha.causa is not None:
                     raise falha.causa from falha
+                if isinstance(falha.causa, RecusaDoLLM):
+                    raise FalhaDoLLM("acao", "", falha.causa) from falha
                 # Sem estrito, o modelo que falhava devolvia o payload cru ("DEMANDA / ESCOPO:..."),
                 # colado sobre a seleção em silêncio.
                 return None
@@ -517,15 +519,20 @@ class ActionManager:
             result = groq_service.completar_com_reserva(groq_service.client, [
                 {"role": "system", "content": system_instruction},
                 {"role": "user", "content": prompt}
-            ], temperature=0.1, max_tokens=2048, timeout=6.0, entrada=selected_text or command)
+            ], temperature=0.1, max_tokens=2048, timeout=6.0, entrada=selected_text or command,
+                aceitar_recusa_entre_familias=True)
             return result or None
         except ERROS_PASSAGEIROS:
             # Rede, 429 ou 5xx: o pedido ditado não tem reserva para colar. Sobe até o pipeline,
             # que guarda o áudio na fila e oferece o reenvio, em vez de dizer "Não executei".
             raise
+        except RecusaDoLLM as e:
+            raise FalhaDoLLM("acao", "", e) from e
         except FalhaDoLLM as falha:
             if falha.transitoria and falha.causa is not None:
                 raise falha.causa from falha
+            if isinstance(falha.causa, RecusaDoLLM):
+                raise FalhaDoLLM("acao", "", falha.causa) from falha
             return None
         except Exception as e:  # noqa: BLE001 — fronteira defensiva: chamada ao serviço LLM do Copiloto
             print(f"[ActionManager] Erro ao executar ação de IA: {e}")
