@@ -517,7 +517,7 @@ class ActionManager:
             result = groq_service.completar_com_reserva(groq_service.client, [
                 {"role": "system", "content": system_instruction},
                 {"role": "user", "content": prompt}
-            ], temperature=0.1, max_tokens=2048, timeout=6.0)
+            ], temperature=0.1, max_tokens=2048, timeout=6.0, entrada=selected_text or command)
             return result or None
         except ERROS_PASSAGEIROS:
             # Rede, 429 ou 5xx: o pedido ditado não tem reserva para colar. Sobe até o pipeline,
