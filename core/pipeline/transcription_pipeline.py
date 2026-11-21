@@ -29,7 +29,7 @@ from core.actions import ActionManager
 from core.audio_processing.dsp import fatiar_audio_para_whisper
 from core.config import FAILED_AUDIO_PATH, USER_DATA_DIR
 from core.context import ContextManager
-from core.groq_service import FalhaDoLLM
+from core.groq_service import FalhaDoLLM, RecusaDoLLM
 from core.storage.history_store import _atomic_write_json
 from core.text_processing import ESTILOS_EM_PROSA, TextProcessor
 
@@ -132,6 +132,13 @@ _AVISO_DA_FALHA = {
     "traducao_es": ("error", "Sem tradução: o texto ficou em português", "Sem tradução ES"),
     "ata": ("offline_retry", "Ata não gerada. Clique p/ reenviar", None),
 }
+# Quando a Groq respondeu, mas o modelo recusou o conteúdo (RecusaDoLLM): dizer "não respondeu"
+# induz a tentar de novo sem efeito. Cada aviso cabe nos ~45 caracteres da pílula.
+_AVISO_DA_RECUSA = {
+    "refino": ("error", "Sem polimento: a IA recusou o texto", "Sem polimento"),
+    "prompt": ("error", "Prompt sem estrutura: a IA recusou", "Prompt sem estrutura"),
+    "traducao_es": ("error", "Sem tradução: a IA recusou o texto", "Sem tradução ES"),
+}
 # No modo privado nenhum áudio nem texto novo vai para o disco: nem o áudio na fila ou no
 # last_failed_audio.wav, nem os blocos transcritos ao lado de um item. (Um item que já estava na
 # fila ganha só o marcador vazio de entregue, ver _entregar_resultado.) A pílula diz isso em vez
@@ -158,6 +165,10 @@ _COPIADO_SEM_ALVO = "Copiado: cole onde quiser 📋"
 _NADA_A_COLAR = {
     "transformar": "Não transformei: Groq não respondeu",
     "acao": "Não executei: Groq não respondeu",
+}
+_NADA_A_COLAR_RECUSA = {
+    "transformar": "Não transformei: a IA recusou o pedido",
+    "acao": "Não executei: a IA recusou o pedido",
 }
 # O modo pode ter "_" (translate_es): com [a-z]+, o item não casava e o reenvio ia como ditado.
 _NOME_NA_FILA = re.compile(r"^(\d{8}T\d{6})\.(\d{9})Z_([a-z_]+)\.wav$")
@@ -652,7 +663,13 @@ class TranscriptionPipeline:
         elif self._falha_llm is not None and self._falha_llm.etapa in _NADA_A_COLAR:
             # Colar a seleção sobre ela mesma, ou a frase do comando, parecia sucesso.
             self._tocar_som("error")
-            self._notificar_ui("error", _NADA_A_COLAR[self._falha_llm.etapa])
+            aviso = (
+                _NADA_A_COLAR_RECUSA[self._falha_llm.etapa]
+                if isinstance(self._falha_llm.causa, RecusaDoLLM)
+                and self._falha_llm.etapa in _NADA_A_COLAR_RECUSA
+                else _NADA_A_COLAR[self._falha_llm.etapa]
+            )
+            self._notificar_ui("error", aviso)
         else:
             self._notificar_ui("cancelled")
 
@@ -1153,7 +1170,12 @@ class TranscriptionPipeline:
         if entregue and self._falha_llm is not None and self._falha_llm.etapa in _AVISO_DA_FALHA:
             # Por último, para não ser atropelado: o texto foi, mas não como deveria. Com áudio na
             # fila, o aviso vai junto do reenvio, senão apagaria o estado clicável.
-            estado, mensagem, curto = _AVISO_DA_FALHA[self._falha_llm.etapa]
+            estado, mensagem, curto = (
+                _AVISO_DA_RECUSA[self._falha_llm.etapa]
+                if isinstance(self._falha_llm.causa, RecusaDoLLM)
+                and self._falha_llm.etapa in _AVISO_DA_RECUSA
+                else _AVISO_DA_FALHA[self._falha_llm.etapa]
+            )
             nao_salvo = _NAO_GUARDADO_NO_PRIVADO if privado else "o áudio não pôde ser salvo"
             if self._falha_llm.etapa == "ata" and not guarda_para_a_ata:
                 # Sem o áudio guardado, não há o que reenviar.
