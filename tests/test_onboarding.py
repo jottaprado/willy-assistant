@@ -595,6 +595,162 @@ class TestOnboardingUI(unittest.TestCase):
             tab_onb_sem.lbl_status_chave.cget("text"),
         )
 
+    def test_t1_reverificar_cofre_com_erro_de_callback_e_chave_em_uso_nao_culpa_cofre(self):
+        """T1: Se on_reload_api_key levanta erro com cofre_ilegivel=False e chave em uso, não culpa o cofre."""
+        from ui.tabs.tab_onboarding import build_tab_onboarding
+        from ui.tabs.tab_settings import build_tab_settings
+        from ui.theme import ACCENT_RED
+
+        def _falha_reload():
+            raise RuntimeError("falha ao sincronizar bandeja")
+
+        esperado = "Não foi possível recarregar a chave. O Willy continua com a chave que já estava em uso."
+        cfg_dados = {"api_key": "gsk_ativa_teste", "cofre_ilegivel": False, "onboarding_completed": False}
+
+        tab_set = build_tab_settings(self.root, callbacks={
+            "get_settings": lambda: dict(cfg_dados),
+            "get_app_rules": list,
+            "get_audio_devices": list,
+            "get_outputs_dir": lambda: "C:/fake",
+            "on_reload_api_key": _falha_reload,
+        })
+        tab_set._reverificar_cofre_api()
+        self.assertEqual(esperado, tab_set.lbl_status_key.cget("text"))
+        self.assertNotIn("cofre do Windows", tab_set.lbl_status_key.cget("text"))
+        self.assertEqual(ACCENT_RED, tab_set.lbl_status_key.cget("text_color"))
+
+        tab_onb = build_tab_onboarding(self.root, callbacks={
+            "get_settings": lambda: dict(cfg_dados),
+            "on_reload_api_key": _falha_reload,
+        })
+        self.assertFalse(tab_onb.reverificar_cofre())
+        self.assertEqual(esperado, tab_onb.lbl_status_chave.cget("text"))
+        self.assertNotIn("cofre do Windows", tab_onb.lbl_status_chave.cget("text"))
+        self.assertEqual(ACCENT_RED, tab_onb.lbl_status_chave.cget("text_color"))
+
+        # Precedência 2 > 3: quando cofre_ilegivel=True e o callback também levanta, vale a mensagem do cofre.
+        esperado_cofre = "Não foi possível ler o cofre do Windows. O Willy continua com a chave que já estava em uso."
+        cfg_cofre = {"api_key": "gsk_ativa_teste", "cofre_ilegivel": True, "onboarding_completed": False}
+        tab_set_cofre = build_tab_settings(self.root, callbacks={
+            "get_settings": lambda: dict(cfg_cofre),
+            "get_app_rules": list,
+            "get_audio_devices": list,
+            "get_outputs_dir": lambda: "C:/fake",
+            "on_reload_api_key": _falha_reload,
+        })
+        tab_set_cofre._reverificar_cofre_api()
+        self.assertEqual(esperado_cofre, tab_set_cofre.lbl_status_key.cget("text"))
+
+        tab_onb_cofre = build_tab_onboarding(self.root, callbacks={
+            "get_settings": lambda: dict(cfg_cofre),
+            "on_reload_api_key": _falha_reload,
+        })
+        self.assertFalse(tab_onb_cofre.reverificar_cofre())
+        self.assertEqual(esperado_cofre, tab_onb_cofre.lbl_status_chave.cget("text"))
+
+    def test_t2_reverificar_cofre_com_erro_de_callback_sem_chave_mostra_botao_da_aba(self):
+        """T2: Se on_reload_api_key levanta erro sem chave e cofre_ilegivel=False, cita o botão da aba."""
+        from ui.tabs.tab_onboarding import build_tab_onboarding
+        from ui.tabs.tab_settings import build_tab_settings
+        from ui.theme import ACCENT_RED
+
+        def _falha_reload():
+            raise RuntimeError("falha ao ler arquivo auxiliar")
+
+        cfg_dados = {"api_key": "", "cofre_ilegivel": False, "onboarding_completed": False}
+
+        tab_set = build_tab_settings(self.root, callbacks={
+            "get_settings": lambda: dict(cfg_dados),
+            "get_app_rules": list,
+            "get_audio_devices": list,
+            "get_outputs_dir": lambda: "C:/fake",
+            "on_reload_api_key": _falha_reload,
+        })
+        tab_set._reverificar_cofre_api()
+        self.assertEqual(
+            "Não foi possível recarregar a chave. Cole a chave no campo e clique em Salvar e Aplicar Ajustes.",
+            tab_set.lbl_status_key.cget("text"),
+        )
+        self.assertNotIn("cofre do Windows", tab_set.lbl_status_key.cget("text"))
+        self.assertEqual(ACCENT_RED, tab_set.lbl_status_key.cget("text_color"))
+
+        tab_onb = build_tab_onboarding(self.root, callbacks={
+            "get_settings": lambda: dict(cfg_dados),
+            "on_reload_api_key": _falha_reload,
+        })
+        self.assertFalse(tab_onb.reverificar_cofre())
+        self.assertEqual(
+            "Não foi possível recarregar a chave. Cole a chave no campo e clique em Validar e Salvar Chave.",
+            tab_onb.lbl_status_chave.cget("text"),
+        )
+        self.assertNotIn("cofre do Windows", tab_onb.lbl_status_chave.cget("text"))
+        self.assertEqual(ACCENT_RED, tab_onb.lbl_status_chave.cget("text_color"))
+
+    def test_t3_reverificar_cofre_trata_placeholder_sua_chave_aqui_como_sem_chave(self):
+        """T3 (R9/R10): Placeholder 'sua_chave_aqui' conta como sem chave quando cofre_ilegivel=True."""
+        from ui.tabs.tab_onboarding import build_tab_onboarding
+        from ui.tabs.tab_settings import build_tab_settings
+
+        cfg_dados = {"api_key": "sua_chave_aqui", "cofre_ilegivel": True, "onboarding_completed": False}
+
+        tab_set = build_tab_settings(self.root, callbacks={
+            "get_settings": lambda: dict(cfg_dados),
+            "get_app_rules": list,
+            "get_audio_devices": list,
+            "get_outputs_dir": lambda: "C:/fake",
+            "on_reload_api_key": lambda: False,
+        })
+        tab_set._reverificar_cofre_api()
+        self.assertEqual(
+            "Não foi possível ler o cofre do Windows. Cole a chave no campo e clique em Salvar e Aplicar Ajustes.",
+            tab_set.lbl_status_key.cget("text"),
+        )
+
+        tab_onb = build_tab_onboarding(self.root, callbacks={
+            "get_settings": lambda: dict(cfg_dados),
+            "on_reload_api_key": lambda: False,
+        })
+        self.assertFalse(tab_onb.reverificar_cofre())
+        self.assertEqual(
+            "Não foi possível ler o cofre do Windows. Cole a chave no campo e clique em Validar e Salvar Chave.",
+            tab_onb.lbl_status_chave.cget("text"),
+        )
+
+    def test_t4_ajustes_protege_leitura_de_get_settings_em_reverificar_cofre(self):
+        """T4: Se get_settings levanta erro em _reverificar_cofre_api, não escapa exceção e avisa recarga."""
+        import io
+        from contextlib import redirect_stderr
+
+        from ui.tabs.tab_settings import build_tab_settings
+        from ui.theme import ACCENT_RED
+
+        for reload_retorna in (False, True):
+            with self.subTest(reload_retorna=reload_retorna):
+                chamadas = {"n": 0}
+
+                def _get_settings_falha_no_clique(contador=chamadas):
+                    contador["n"] += 1
+                    if contador["n"] > 1:
+                        raise RuntimeError("falha simulada em get_settings")
+                    return {"api_key": "", "cofre_ilegivel": False}
+
+                tab_set = build_tab_settings(self.root, callbacks={
+                    "get_settings": _get_settings_falha_no_clique,
+                    "get_app_rules": list,
+                    "get_audio_devices": list,
+                    "get_outputs_dir": lambda: "C:/fake",
+                    "on_reload_api_key": lambda r=reload_retorna: r,
+                })
+                err = io.StringIO()
+                with redirect_stderr(err):
+                    tab_set._reverificar_cofre_api()
+                self.assertEqual(
+                    "Não foi possível recarregar a chave. Cole a chave no campo e clique em Salvar e Aplicar Ajustes.",
+                    tab_set.lbl_status_key.cget("text"),
+                )
+                self.assertEqual(ACCENT_RED, tab_set.lbl_status_key.cget("text_color"))
+                self.assertIn("[SettingsTab] Erro ao ler ajustes:", err.getvalue())
+
 
 class TestFluxosOnboardingWilly(unittest.TestCase):
     """Exercita as funções novas de willy.py ligadas ao onboarding e recarga em memória."""

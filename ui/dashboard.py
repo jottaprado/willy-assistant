@@ -80,6 +80,9 @@ def construir_callbacks_padrao(cfg, snip) -> dict:
     from core import AudioManager, AutoStartManager, ConfigManager
     from core.config import credenciais_do_willy
 
+    def _transcrever_indisponivel(path, **kw):
+        raise RuntimeError("Transcrever arquivo indisponível no modo isolado.")
+
     return {
         "get_history": cfg.load_history,
         "get_analytics": cfg.get_analytics_metrics,
@@ -99,10 +102,9 @@ def construir_callbacks_padrao(cfg, snip) -> dict:
         "on_export_profile": cfg.export_profile,
         "on_import_profile": cfg.import_profile,
         "get_hotkey_failures": dict,
-        "on_reformat_text": lambda texto, modo, **kw: texto,
         "get_last_external_app": lambda: None,
         "on_reuse_text": lambda texto: False,
-        "on_transcribe_file": lambda path, **kw: "",
+        "on_transcribe_file": _transcrever_indisponivel,
         "on_play_audio": ConfigManager.open_file,
         "on_open_outputs": cfg.open_outputs_folder,
         "on_open_file": ConfigManager.open_file,
@@ -154,8 +156,8 @@ def construir_callbacks_padrao(cfg, snip) -> dict:
         "on_toggle_sleep": lambda: True,
         "on_save_settings": cfg.save_settings,
         "on_validate_groq_key": lambda chave, salvar=False: (
-            bool((chave or "").strip() and (chave or "").strip() != "sua_chave_aqui"),
-            "Chave salva." if (chave or "").strip() else "Nenhuma chave informada.",
+            False,
+            "Validação indisponível no modo isolado.",
             0.0,
             {},
         ),
