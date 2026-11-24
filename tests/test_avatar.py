@@ -192,6 +192,52 @@ class TestT21DashboardNavegacaoETema(unittest.TestCase):
         self.assertEqual(cbs["on_open_file"], ConfigManager.open_file)
         self.assertIsNone(cbs["get_last_external_app"]())
 
+    def test_t5_construir_callbacks_padrao_expoe_cofre_ilegivel_em_get_settings(self):
+        """T5 (R2): get_settings de construir_callbacks_padrao reflete cfg.cofre_ilegivel (False e True)."""
+        from core import ConfigManager, SnippetManager
+        from tests.config_isolada import isolar_config
+        from ui.dashboard import construir_callbacks_padrao
+
+        class _CofreLocal:
+            def __init__(self, chave=""):
+                self.chave = chave
+                self.falha = False
+
+            def get_password(self, _srv, _usr):
+                if self.falha:
+                    raise RuntimeError("cofre indisponível")
+                return self.chave
+
+            def set_password(self, _srv, _usr, valor):
+                self.chave = valor
+
+        isolar_config(self)
+        cofre = _CofreLocal(chave="gsk_teste_isolado")
+        cfg = ConfigManager(cofre=cofre)
+        cbs = construir_callbacks_padrao(cfg, SnippetManager())
+        self.assertIs(False, cbs["get_settings"]()["cofre_ilegivel"])
+
+        cofre.falha = True
+        cfg.recarregar_chave_do_cofre()
+        self.assertIs(True, cbs["get_settings"]()["cofre_ilegivel"])
+
+    def test_t6_construir_callbacks_padrao_nao_finge_sucesso_nos_stubs_isolados(self):
+        """T6: No modo isolado, stubs não simulam reformatação, transcrição nem validação de chave."""
+        from core import ConfigManager, SnippetManager
+        from tests.config_isolada import isolar_config
+        from ui.dashboard import construir_callbacks_padrao
+
+        isolar_config(self)
+        cbs = construir_callbacks_padrao(ConfigManager(), SnippetManager())
+        self.assertNotIn("on_reformat_text", cbs)
+        with self.assertRaises(RuntimeError) as ctx:
+            cbs["on_transcribe_file"]("amostra_teste.wav")
+        self.assertIn("modo isolado", str(ctx.exception))
+        self.assertEqual(
+            (False, "Validação indisponível no modo isolado.", 0.0, {}),
+            cbs["on_validate_groq_key"]("x"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -651,6 +651,30 @@ class TestRecusaDoLLMNaoSubstituiDitado(unittest.TestCase):
                 self.assertEqual(("error", _AVISO_DA_RECUSA[etapa][1]), h.ui[-1])
                 self.assertIsInstance(h.pipeline._falha_llm.causa, RecusaDoLLM)
 
+    def test_t7_rota_de_agente_no_copiloto_mostra_aviso_de_recusa_na_pilula(self):
+        """T7 (P08): Na rota de agente do copiloto (prompt/missão/agente/goal/maestro), recusa avisa recusa."""
+        from core.pipeline import PipelineContext
+        from core.pipeline.transcription_pipeline import _NADA_A_COLAR_RECUSA
+        from tests.test_fila_audio_falho import _Pipeline
+        from tests.test_velocidade_medida import _wav
+
+        harness = _Pipeline()
+        harness.setUp()
+        self.addCleanup(harness.tearDown)
+        servico, _ = self._servico([_resposta(self.META_RECUSA_PT)] * 3)
+        harness.groq_service = servico
+        harness.pipeline.groq_service = servico
+        with patch.object(servico, "transcribe", return_value="Willy, crie um prompt de agente para auditar logs"), \
+                patch.object(ActionManager, "get_selected_text", return_value="Log de compilação do servidor."), \
+                patch.object(servico, "generate_agent_prompt", wraps=servico.generate_agent_prompt) as spy_prompt:
+            harness.pipeline.process(PipelineContext(
+                wav_bytes=_wav(2.0), modo="transcribe",
+                app_context=("code.exe", "editor", "general"),
+            ))
+        spy_prompt.assert_called_once()
+        harness.injector.paste_text.assert_not_called()
+        self.assertEqual(("error", _NADA_A_COLAR_RECUSA["acao"]), harness.ui[-1])
+
     def test_refine_text_delimita_com_transcricao_e_remove_tags_ecoadas(self):
         texto = "Liste os módulos com cobertura abaixo de oitenta por cento."
         servico, cliente = self._servico([_resposta(f"<transcricao>\n{texto}\n</transcricao>")])

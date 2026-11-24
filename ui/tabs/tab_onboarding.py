@@ -500,14 +500,6 @@ class OnboardingTab(ctk.CTkScrollableFrame):
         cfg = self._ler_settings()
         chave = (cfg.get("api_key") or "").strip()
         tem_chave = bool(chave and chave != "sua_chave_aqui")
-        if not encontrou and (erro_callback or bool(cfg.get("cofre_ilegivel"))):
-            texto = (
-                "Não foi possível ler o cofre do Windows. O Willy continua com a chave que já estava em uso."
-                if tem_chave
-                else "Não foi possível ler o cofre do Windows. Cole a chave no campo e clique em Validar e Salvar Chave."
-            )
-            self._definir_status_chave(texto, ACCENT_RED)
-            return False
         if encontrou and tem_chave:
             self.entry_api_key.delete(0, "end")
             self.entry_api_key.insert(0, chave)
@@ -518,6 +510,22 @@ class OnboardingTab(ctk.CTkScrollableFrame):
             self._chave_validada = True
             self._atualizar_botoes_navegacao()
             return True
+        if not encontrou and bool(cfg.get("cofre_ilegivel")):
+            texto = (
+                "Não foi possível ler o cofre do Windows. O Willy continua com a chave que já estava em uso."
+                if tem_chave
+                else "Não foi possível ler o cofre do Windows. Cole a chave no campo e clique em Validar e Salvar Chave."
+            )
+            self._definir_status_chave(texto, ACCENT_RED)
+            return False
+        if not encontrou and erro_callback:
+            texto = (
+                "Não foi possível recarregar a chave. O Willy continua com a chave que já estava em uso."
+                if tem_chave
+                else "Não foi possível recarregar a chave. Cole a chave no campo e clique em Validar e Salvar Chave."
+            )
+            self._definir_status_chave(texto, ACCENT_RED)
+            return False
         self._definir_status_chave("Nenhuma chave encontrada ainda no cofre ou no arquivo .env.", ACCENT_AMBER)
         return False
 

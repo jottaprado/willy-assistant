@@ -818,7 +818,15 @@ class SettingsTab(ctk.CTkScrollableFrame):
             except Exception as e:  # noqa: BLE001 — Fronteira defensiva ao recarregar cofre
                 erro_callback = True
                 print(f"[SettingsTab] Erro ao reverificar cofre: {e}", file=sys.stderr)
-        cfg = (self.callbacks["get_settings"]() or {}) if self.callbacks.get("get_settings") else {}
+        cfg: dict[str, Any] = {}
+        get_cfg = self.callbacks.get("get_settings")
+        if get_cfg:
+            try:
+                cfg = get_cfg() or {}
+            except Exception as e:  # noqa: BLE001 — Fronteira defensiva ao ler ajustes
+                encontrou = False
+                erro_callback = True
+                print(f"[SettingsTab] Erro ao ler ajustes: {e}", file=sys.stderr)
         chave = (cfg.get("api_key") or "").strip()
         tem_chave = bool(chave and chave != "sua_chave_aqui")
         if encontrou:
@@ -828,11 +836,19 @@ class SettingsTab(ctk.CTkScrollableFrame):
                     text="Chave encontrada no cofre e recarregada na interface.",
                     text_color=ACCENT_GREEN,
                 )
-        elif erro_callback or bool(cfg.get("cofre_ilegivel")):
+        elif bool(cfg.get("cofre_ilegivel")):
             texto = (
                 "Não foi possível ler o cofre do Windows. O Willy continua com a chave que já estava em uso."
                 if tem_chave
                 else "Não foi possível ler o cofre do Windows. Cole a chave no campo e clique em Salvar e Aplicar Ajustes."
+            )
+            if hasattr(self, "lbl_status_key") and self.lbl_status_key.winfo_exists():
+                self.lbl_status_key.configure(text=texto, text_color=ACCENT_RED)
+        elif erro_callback:
+            texto = (
+                "Não foi possível recarregar a chave. O Willy continua com a chave que já estava em uso."
+                if tem_chave
+                else "Não foi possível recarregar a chave. Cole a chave no campo e clique em Salvar e Aplicar Ajustes."
             )
             if hasattr(self, "lbl_status_key") and self.lbl_status_key.winfo_exists():
                 self.lbl_status_key.configure(text=texto, text_color=ACCENT_RED)
