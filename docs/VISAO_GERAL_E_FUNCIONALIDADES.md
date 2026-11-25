@@ -11,7 +11,7 @@ A transcrição usa o Whisper hospedado na Groq (`whisper-large-v3-turbo` por pa
 | Indicador | Valor em 25/11/2026 |
 | --- | --- |
 | Código do produto | 24.401 linhas em 66 arquivos (`core/`, `ui/`, `willy.py`, `versao.py`) |
-| Testes | 1.921 testes em 134 arquivos `test_*.py`, 33.352 linhas (`python -m unittest discover -s tests`) |
+| Testes | 1.921 testes em 134 arquivos `test_*.py`, 33.355 linhas (`python -m unittest discover -s tests`) |
 | Histórico | 330 commits desde 17/09/2026 e 28 PRs no repositório privado antes da abertura na 1.14.1. Os números de PR citados nas versões anteriores são de lá. O repositório público começa na 1.14.1 com 1 commit e numera os PRs dele a partir do #1 |
 | Versão | 1.14.6, definida só em `versao.py` |
 | Plataforma | Windows 10/11, executável via PyInstaller + instalador Inno Setup |
