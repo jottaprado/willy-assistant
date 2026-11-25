@@ -251,5 +251,141 @@ class TestComandoGuardadoNaFila(_Pipeline):
         self.assertEqual([item], self.fila.itens(), "o reenvio com falha transitória não pode apagar o áudio")
 
 
+class TestAvisoFallback429(unittest.TestCase):
+    def test_429_registra_fallback_por_thread_sem_vazar_entre_threads(self):
+        import threading
+
+        servico = GroqService(api_key="gsk_teste", llm_model=modelos_llm.SMART)
+        barreira = threading.Barrier(2)
+        resultados: dict[str, tuple[str, str] | None] = {}
+
+        def _worker_a():
+            cli_a = MagicMock()
+            cli_a.with_options.return_value = cli_a
+            cli_a.chat.completions.create.side_effect = [_http(groq.RateLimitError, 429), _resposta("Texto polido A.")]
+            out = servico.completar_com_reserva(cli_a, [{"role": "user", "content": "texto a"}], 0.0, 64, 2.0)
+            self.assertEqual("Texto polido A.", out)
+            barreira.wait(timeout=5)
+            resultados["a"] = servico.fallback_429_recente()
+
+        def _worker_b():
+            cli_b = MagicMock()
+            cli_b.with_options.return_value = cli_b
+            cli_b.chat.completions.create.side_effect = [_resposta("Texto polido B.")]
+            out = servico.completar_com_reserva(cli_b, [{"role": "user", "content": "texto b"}], 0.0, 64, 2.0)
+            self.assertEqual("Texto polido B.", out)
+            barreira.wait(timeout=5)
+            resultados["b"] = servico.fallback_429_recente()
+
+        ta = threading.Thread(target=_worker_a)
+        tb = threading.Thread(target=_worker_b)
+        ta.start()
+        tb.start()
+        ta.join(timeout=5)
+        tb.join(timeout=5)
+
+        self.assertEqual((modelos_llm.SMART, modelos_llm.FLASH), resultados["a"])
+        self.assertIsNone(resultados["b"])
+
+    def test_recusa_para_coder_sem_429_nao_registra_fallback_429(self):
+        servico, cliente = _servico(
+            [
+                _resposta("Desculpe, mas não posso ajudar com isso."),
+                _resposta("Desculpe, mas não posso ajudar com isso."),
+                _resposta("Lista técnica verificada com sucesso."),
+            ],
+            modelo=modelos_llm.SMART,
+        )
+        out = servico.completar_com_reserva(cliente, [{"role": "user", "content": "Verifique os logs do servidor."}], 0.0, 64, 2.0)
+        self.assertEqual("Lista técnica verificada com sucesso.", out)
+        self.assertIsNone(servico.fallback_429_recente())
+
+    def test_traducao_multi_pedaco_preserva_fallback_429_de_pedaco_anterior(self):
+        servico, _cliente = _servico(
+            [
+                _http(groq.RateLimitError, 429),
+                _resposta("Primer bloque traducido."),
+                _resposta("Segundo bloque traducido."),
+            ],
+            modelo=modelos_llm.SMART,
+        )
+        servico.PEDACO_DA_TRADUCAO = 40
+        texto = "Primeira frase tecnica bem longa. Segunda frase tecnica tambem longa."
+        saida = servico.translate_to_spanish(texto, estrito=True)
+        self.assertIn("Primer bloque", saida)
+        self.assertIn("Segundo bloque", saida)
+        self.assertEqual((modelos_llm.SMART, modelos_llm.FLASH), servico.fallback_429_recente())
+
+    def test_pipeline_mostra_aviso_verde_nas_cinco_etapas_em_fallback_429(self):
+        cenarios = [
+            ("transcribe", "refino normal com varias palavras tecnicas para testar", None, "Refinado no Flash."),
+            ("translate_es", "texto tecnico longo para traduzir ao espanhol", None, "Texto tecnico en espanol."),
+            ("meeting", "Decidimos revisar a arquitetura do servidor nesta semana.", None, "## Ata Executiva\n- Revisar arquitetura."),
+            ("transform", "torne mais conciso", "Paragrafo de especificacao tecnica original.", "Especificacao concisa."),
+            ("transcribe", "Willy, explique o erro de timeout na conexao", "Timeout ao conectar no banco.", "Verifique a porta e o firewall."),
+        ]
+        for modo, fala, selecao, resposta_flash in cenarios:
+            with self.subTest(modo=modo, fala=fala[:25]):
+                h = _Pipeline()
+                h.setUp()
+                self.addCleanup(h.tearDown)
+                svc, _ = _servico([_http(groq.RateLimitError, 429), _resposta(resposta_flash)], modelo=modelos_llm.SMART)
+                h.groq_service = svc
+                h.pipeline.groq_service = svc
+                with patch.object(svc, "transcribe", return_value=fala), \
+                        patch.object(ActionManager, "get_selected_text", return_value=selecao or ""):
+                    res = h.pipeline.process(PipelineContext(
+                        wav_bytes=_wav(2.0), modo=modo, selected_text=selecao,
+                        app_context=("code.exe", "editor", "general"),
+                    ))
+                self.assertTrue(res.success)
+                h.injector.paste_text.assert_called_once()
+                self.assertEqual(("success", "Colado com Flash (limite no Smart)"), h.ui[-1])
+
+        # Resposta direta sem 429 mantém o sucesso padrão (sem menção de limite).
+        h_direto = _Pipeline()
+        h_direto.setUp()
+        self.addCleanup(h_direto.tearDown)
+        svc_ok, _ = _servico([_resposta("Refinado direto no Smart.")], modelo=modelos_llm.SMART)
+        h_direto.groq_service = svc_ok
+        h_direto.pipeline.groq_service = svc_ok
+        with patch.object(svc_ok, "transcribe", return_value="refino direto com varias palavras tecnicas"):
+            h_direto.pipeline.process(PipelineContext(
+                wav_bytes=_wav(2.0), modo="transcribe", app_context=("code.exe", "editor", "general"),
+            ))
+        self.assertEqual(("success", None), h_direto.ui[-1])
+
+        # Recusa que vai para o Coder sem 429 mantém sucesso padrão (não diz limite).
+        h_rec = _Pipeline()
+        h_rec.setUp()
+        self.addCleanup(h_rec.tearDown)
+        svc_rec, _ = _servico([
+            _resposta("Desculpe, mas não posso ajudar com isso."),
+            _resposta("Desculpe, mas não posso ajudar com isso."),
+            _resposta("Refinado pelo Coder."),
+        ], modelo=modelos_llm.SMART)
+        h_rec.groq_service = svc_rec
+        h_rec.pipeline.groq_service = svc_rec
+        with patch.object(svc_rec, "transcribe", return_value="Liste os modulos com falha de compilacao."):
+            h_rec.pipeline.process(PipelineContext(
+                wav_bytes=_wav(2.0), modo="transcribe", app_context=("code.exe", "editor", "general"),
+            ))
+        self.assertEqual(("success", None), h_rec.ui[-1])
+
+        # Falha total (429 em todos) mantém o erro de falha do LLM (não vira sucesso com Flash).
+        h_err = _Pipeline()
+        h_err.setUp()
+        self.addCleanup(h_err.tearDown)
+        svc_err, _ = _servico([_http(groq.RateLimitError, 429)] * 2, modelo=modelos_llm.SMART)
+        h_err.groq_service = svc_err
+        h_err.pipeline.groq_service = svc_err
+        with patch.object(svc_err, "transcribe", return_value="refino com limite em todos os modelos"):
+            h_err.pipeline.process(PipelineContext(
+                wav_bytes=_wav(2.0), modo="transcribe", app_context=("code.exe", "editor", "general"),
+            ))
+        self.assertEqual("error", h_err.ui[-1][0])
+        self.assertNotIn("Colado com Flash", str(h_err.ui[-1][1]))
+
+
 if __name__ == "__main__":
     unittest.main()

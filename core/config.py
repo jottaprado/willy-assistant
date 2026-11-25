@@ -262,6 +262,8 @@ class ConfigManager:
         self.cofre_ilegivel = False
         # O último import_profile descartou a chave do perfil porque já havia uma configurada.
         self.chave_do_perfil_ignorada = False
+        # Valor de GROQ_LLM_MODEL fora do catálogo trocado pelo Smart na carga ou importação.
+        self.modelo_llm_substituido: str | None = None
         self.history_store = HistoryStore(lambda: HISTORY_FILE)
         self.vocab_store = VocabularyStore(lambda: VOCAB_FILE, lambda: REPLACEMENTS_FILE)
         self.settings_store = SettingsStore(lambda: ENV_FILE)
@@ -403,6 +405,14 @@ class ConfigManager:
         # refino falhava. A config recusava "gpt-oss" e "qwen", que são os substitutos.
         raw_llm = os.getenv("GROQ_LLM_MODEL", "").strip()
         self.llm_model = modelos_llm.modelo_em_uso(raw_llm)
+        if modelos_llm.modelo_desconhecido(raw_llm):
+            self.modelo_llm_substituido = raw_llm
+            print(
+                f"[ConfigManager] Modelo LLM fora do catálogo ({raw_llm!r}); usando {self.llm_model}.",
+                file=sys.stderr,
+            )
+        else:
+            self.modelo_llm_substituido = None
         if raw_llm and self.llm_model != raw_llm:
             self.settings_store.save_settings({"GROQ_LLM_MODEL": self.llm_model})
         self.processing_profile = os.getenv("PROCESSING_PROFILE", "dev").strip().lower()
@@ -545,8 +555,17 @@ class ConfigManager:
             if pos in POSICOES_DA_PILULA_VALIDAS:
                 self.pill_position = pos
         if "GROQ_LLM_MODEL" in novos_dados:
+            raw_novo = str(novos_dados["GROQ_LLM_MODEL"] or "").strip()
             # Um perfil exportado antes da troca traz o modelo desligado.
-            self.llm_model = modelos_llm.modelo_em_uso(novos_dados["GROQ_LLM_MODEL"])
+            self.llm_model = modelos_llm.modelo_em_uso(raw_novo)
+            if modelos_llm.modelo_desconhecido(raw_novo):
+                self.modelo_llm_substituido = raw_novo
+                print(
+                    f"[ConfigManager] Modelo LLM fora do catálogo ({raw_novo!r}); usando {self.llm_model}.",
+                    file=sys.stderr,
+                )
+            else:
+                self.modelo_llm_substituido = None
         if "MEETING_HOTKEY" in novos_dados:
             self.meeting_hotkey = str(novos_dados["MEETING_HOTKEY"]).strip()
         if "PROMPT_HOTKEY" in novos_dados:
@@ -919,6 +938,11 @@ class ConfigManager:
             target_path, snippet_mgr=snippet_mgr, include_api_key=include_api_key,
             include_history=include_history,
         )
+
+    def resumir_perfil(self, source_path: str) -> dict[str, Any] | None:
+        """Lê e resume o que um arquivo JSON de perfil alteraria sem gravar nada."""
+        from core.storage.profile_manager import ProfileManager
+        return ProfileManager(self).resumir_perfil(source_path)
 
     def import_profile(self, source_path: str, snippet_mgr=None) -> bool:
         """Restaura o perfil completo do Willy a partir de um arquivo JSON."""

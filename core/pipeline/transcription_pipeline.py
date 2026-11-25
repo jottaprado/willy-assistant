@@ -25,6 +25,7 @@ from typing import Any
 import groq
 import httpx
 
+from core import modelos_llm
 from core.actions import ActionManager
 from core.audio_processing.dsp import fatiar_audio_para_whisper
 from core.config import FAILED_AUDIO_PATH, USER_DATA_DIR
@@ -372,6 +373,7 @@ class _EstadoExecucao:
     motivo_sem_texto: str | None = None
     estado_do_motivo: str = "error"
     blocos: dict[int, str] = field(default_factory=dict)
+    fallback_429: tuple[str, str] | None = None
 
 
 class TranscriptionPipeline:
@@ -479,6 +481,21 @@ class TranscriptionPipeline:
     def _blocos(self, valor: dict[int, str]) -> None:
         self._estado().blocos = valor
 
+    @property
+    def _fallback_429(self) -> tuple[str, str] | None:
+        return self._estado().fallback_429
+
+    @_fallback_429.setter
+    def _fallback_429(self, valor: tuple[str, str] | None) -> None:
+        self._estado().fallback_429 = valor
+
+    def _registrar_fallback_429(self) -> None:
+        ler = getattr(self.groq_service, "fallback_429_recente", None)
+        if callable(ler):
+            fb = ler()
+            if isinstance(fb, tuple) and len(fb) == 2 and all(isinstance(x, str) for x in fb):
+                self._fallback_429 = fb
+
     def importar_audio_legado(self) -> None:
         """Chamado uma vez na abertura do app (ver FilaDeAudioFalho.importar_legado)."""
         try:
@@ -560,6 +577,9 @@ class TranscriptionPipeline:
             return self._guardar_por_ocupado(context)
 
         self._local.estado = _EstadoExecucao(regra_do_app=regra)
+        limpar_fb = getattr(self.groq_service, "limpar_fallback_429", None)
+        if callable(limpar_fb):
+            limpar_fb()
         try:
             self._tocar_som("stop")
             self._notificar_ui("processing")
@@ -761,12 +781,14 @@ class TranscriptionPipeline:
                 termos = self.config_mgr.get_vocab_terms()
                 termos_fixos = f"Termos da pessoa, que ficam como estão: {', '.join(termos)}" if termos else ""
                 try:
-                    return self.groq_service.translate_to_spanish(
+                    traduzido = self.groq_service.translate_to_spanish(
                         texto_bruto,
                         extra_context=termos_fixos,
                         estrito=True,
                         progress_callback=lambda msg: self._notificar_ui("processing", msg),
-                    ), auto_send
+                    )
+                    self._registrar_fallback_429()
+                    return traduzido, auto_send
                 except FalhaDoLLM as falha:
                     self._falha_llm = falha
                     return falha.reserva, False
@@ -789,7 +811,9 @@ class TranscriptionPipeline:
                 self._texto_cru = texto_bruto  # a transcrição da reunião, antes da ata
                 self._notificar_ui("processing", "Willy gerando Ata Executiva...")
                 try:
-                    return self.groq_service.summarize_meeting(texto_bruto, estrito=True), auto_send
+                    ata = self.groq_service.summarize_meeting(texto_bruto, estrito=True)
+                    self._registrar_fallback_429()
+                    return ata, auto_send
                 except FalhaDoLLM as falha:
                     self._falha_llm = falha
                     return _ATA_AUSENTE + falha.reserva, auto_send
@@ -844,7 +868,9 @@ class TranscriptionPipeline:
                     texto_bruto = self._limpar_cacoetes(texto_bruto)
                 self._notificar_ui("processing", "Willy transformando seleção com IA... 🪄")
                 try:
-                    return self.groq_service.transform_text(base_text, texto_bruto, estrito=True), auto_send
+                    transformado = self.groq_service.transform_text(base_text, texto_bruto, estrito=True)
+                    self._registrar_fallback_429()
+                    return transformado, auto_send
                 except FalhaDoLLM as falha:
                     self._falha_llm = falha
                     return "", auto_send
@@ -997,6 +1023,7 @@ class TranscriptionPipeline:
                 self._notificar_ui("processing", "Willy transformando seleção com IA... 🪄")
                 try:
                     transf_res = self.groq_service.transform_text(sel_text, transf_inst, estrito=True)
+                    self._registrar_fallback_429()
                 except FalhaDoLLM as falha:
                     # Sem isto, a seleção era colada sobre ela mesma, ou a frase do comando era
                     # refinada e colada no lugar.
@@ -1024,6 +1051,7 @@ class TranscriptionPipeline:
                 sel_text = ActionManager.get_selected_text()
                 try:
                     action_res = ActionManager.process_action(cmd, self.groq_service, sel_text)
+                    self._registrar_fallback_429()
                 except FalhaDoLLM as falha:
                     if falha.transitoria and falha.causa is not None:
                         raise falha.causa from falha
@@ -1056,6 +1084,7 @@ class TranscriptionPipeline:
                 profile=getattr(self.config_mgr, "processing_profile", "dev"),
                 estrito=True,
             )
+            self._registrar_fallback_429()
         except FalhaDoLLM as falha:
             # O texto cru ainda é o melhor que há: entrega, e a pílula diz que veio sem polimento.
             self._falha_llm = falha
@@ -1105,17 +1134,28 @@ class TranscriptionPipeline:
         if callable(self.on_pill_text):
             self.on_pill_text(texto, action_type == "paste" and bool(entregue))
 
+        msg_fallback_429 = None
+        if entregue and self._falha_llm is None and self._fallback_429 is not None:
+            escolhido_nome = modelos_llm.nome_amigavel(self._fallback_429[0])
+            usado_nome = modelos_llm.nome_amigavel(self._fallback_429[1])
+            verbo = "Copiado" if copiar else ("Enviado" if auto_send else "Colado")
+            msg_fallback_429 = f"{verbo} com {usado_nome} (limite no {escolhido_nome})"
+
         if copiar:
             if entregue:
                 self._tocar_som("success")
                 if copiar_por_foco:
                     self._notificar_ui("success", aviso_da_copia)
+                elif msg_fallback_429:
+                    self._notificar_ui("success", msg_fallback_429)
                 else:
                     self._notificar_ui("success", "Copiado p/ Área de Transferência! 📋")
         else:
             if entregue:
                 self._tocar_som("success")
-                if auto_send:
+                if msg_fallback_429:
+                    self._notificar_ui("success", msg_fallback_429)
+                elif auto_send:
                     self._notificar_ui("success", "Enviado com Enter! 🚀")
                 else:
                     self._notificar_ui("success")

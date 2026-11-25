@@ -25,8 +25,9 @@ from core.hotkey import (
 )
 from ui.components import (
     PageHeader,
+    confirmar_exclusao,
 )
-from ui.tabs.regras_por_app import SecaoRegrasPorApp
+from ui.tabs.regras_por_app import ROTULOS_DE_MODO, ROTULOS_DE_TOM, SecaoRegrasPorApp
 from ui.theme import (
     ACCENT_AMBER,
     ACCENT_BLUE,
@@ -527,7 +528,17 @@ class SettingsTab(ctk.CTkScrollableFrame):
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
         )
         self.seg_modelo.set(ROTULO_DO_PADRAO)
-        self.seg_modelo.pack(anchor="w", padx=16, pady=(0, 16), fill="x")
+        self.seg_modelo.pack(anchor="w", padx=16, pady=(0, 8), fill="x")
+        self.lbl_aviso_modelo = ctk.CTkLabel(
+            c_modelo,
+            text="",
+            anchor="w",
+            justify="left",
+            wraplength=620,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            text_color=ACCENT_AMBER,
+        )
+        self.lbl_aviso_modelo.pack(anchor="w", padx=16, pady=(0, 12), fill="x")
 
         # 6. Perfil de Processamento de IA
         c_perfil = ctk.CTkFrame(self, fg_color=APPLE_BG_CARD, corner_radius=12, border_width=1, border_color=APPLE_BORDER_CARD)
@@ -1082,13 +1093,97 @@ class SettingsTab(ctk.CTkScrollableFrame):
 
     exportar_perfil_json = _exportar_perfil_json
 
+    @staticmethod
+    def _formatar_resumo_perfil(resumo: dict[str, Any]) -> str:
+        """Formata o resumo de um perfil JSON para o modal de confirmação antes de restaurar."""
+        linhas: list[str] = []
+        n_cfg = int(resumo.get("settings_count") or 0)
+        chave_ign = bool(resumo.get("chave_ignorada"))
+        if n_cfg > 0 or chave_ign:
+            sufixo = " (a chave Groq do perfil será ignorada)" if chave_ign else ""
+            linhas.append(f"Ajustes: {n_cfg} configuração(ões){sufixo}")
+
+        vocab_count = resumo.get("vocabulary_count")
+        if vocab_count is not None:
+            if vocab_count == 0:
+                linhas.append("Vocabulário: vazio (limpa os termos atuais)")
+            else:
+                linhas.append(f"Vocabulário: {vocab_count} termo(s)")
+
+        snips_count = resumo.get("snippets_count")
+        if snips_count is not None:
+            linhas.append(f"Templates: {snips_count} item(ns)")
+
+        hist_count = resumo.get("history_count")
+        if hist_count is not None:
+            linhas.append(f"Histórico: {hist_count} transcrição(ões)")
+
+        regras = resumo.get("app_rules")
+        if regras is not None:
+            linhas.append(f"Regras por aplicativo: {len(regras)}")
+            for regra in regras:
+                app = regra.get("app_exe") or ""
+                titulo = regra.get("title_contains") or ""
+                alvo = f"{app} ({titulo})" if app and titulo else (app or titulo)
+                modo = ROTULOS_DE_MODO.get(regra.get("action_mode", "default"), regra.get("action_mode", "default"))
+                tom = ROTULOS_DE_TOM.get(regra.get("tone", "default"), regra.get("tone", "default"))
+                instr = (regra.get("custom_instruction") or "").strip()
+                if len(instr) > 80:
+                    instr = instr[:77] + "..."
+                detalhe = f"  • {alvo}: modo {modo}, tom {tom}"
+                if instr:
+                    detalhe += f", instrução: {instr}"
+                linhas.append(detalhe)
+
+        reps = resumo.get("replacements")
+        if reps is not None:
+            linhas.append(f"Substituições: {len(reps)}")
+            itens_reps = list(reps.items())
+            for de, para in itens_reps[:10]:
+                linhas.append(f"  • {de} -> {para}")
+            if len(itens_reps) > 10:
+                linhas.append(f"  e mais {len(itens_reps) - 10}")
+
+        if not linhas:
+            linhas.append("O arquivo não altera nenhuma seção atual.")
+        return "\n".join(linhas)
+
+    def _resumir_arquivo_perfil(self, caminho: str) -> dict[str, Any] | None:
+        resumir = self.callbacks.get("on_summarize_profile")
+        if resumir:
+            try:
+                return resumir(caminho)
+            except Exception as e:  # noqa: BLE001 — Fronteira defensiva de resumo de perfil
+                print(f"[SettingsTab] Erro ao resumir perfil: {e}", file=sys.stderr)
+                return None
+        from core.storage.profile_manager import ProfileManager
+
+        class _CfgMinima:
+            outputs_dir = ""
+
+            @staticmethod
+            def chave_configurada() -> str:
+                return ""
+
+        return ProfileManager(_CfgMinima()).resumir_perfil(caminho)
+
     def _importar_perfil_json(self):
         from tkinter import filedialog
+        self._modal_importacao = None
         caminho = filedialog.askopenfilename(title="Restaurar Perfil do Willy", filetypes=[("Arquivo JSON (*.json)", "*.json"), ("Todos os Arquivos", "*.*")])
         if not caminho:
             return
 
-        if self.callbacks.get("on_import_profile"):
+        if not self.callbacks.get("on_import_profile"):
+            return
+
+        resumo = self._resumir_arquivo_perfil(caminho)
+        if resumo is None:
+            self.btn_importar_perfil.configure(text="Falha ao Restaurar Perfil", fg_color=ACCENT_RED, text_color=BTN_PRIMARY_TEXT)
+            self._safe_after(1600, lambda: self.btn_importar_perfil.configure(text="Restaurar Perfil (JSON)", fg_color=APPLE_KEYCAP_BG, text_color=APPLE_TEXT_PRIMARY))
+            return
+
+        def _executar_restauracao():
             try:
                 ok = bool(self.callbacks["on_import_profile"](caminho))
             except Exception as e:  # noqa: BLE001 — Fronteira defensiva de ação em ajustes
@@ -1101,6 +1196,18 @@ class SettingsTab(ctk.CTkScrollableFrame):
             else:
                 self.btn_importar_perfil.configure(text="Falha ao Restaurar Perfil", fg_color=ACCENT_RED, text_color=BTN_PRIMARY_TEXT)
             self._safe_after(1600, lambda: self.btn_importar_perfil.configure(text="Restaurar Perfil (JSON)", fg_color=APPLE_KEYCAP_BG, text_color=APPLE_TEXT_PRIMARY))
+
+        self._modal_importacao = confirmar_exclusao(
+            self,
+            "Restaurar Perfil",
+            self._formatar_resumo_perfil(resumo),
+            _executar_restauracao,
+            rotulo_confirmar="Restaurar",
+            largura=500,
+            altura=380,
+            destrutivo=False,
+            rolavel=True,
+        )
 
     importar_perfil_json = _importar_perfil_json
 
@@ -1219,6 +1326,9 @@ class SettingsTab(ctk.CTkScrollableFrame):
         else:
             self.lbl_status_key.configure(text="⚠️ Nenhuma chave configurada ainda. Cole sua chave acima e clique em Salvar.", text_color=ACCENT_AMBER)
 
+        if hasattr(self, "lbl_aviso_modelo") and self.lbl_aviso_modelo.winfo_exists():
+            self.lbl_aviso_modelo.configure(text="")
+
         self.btn_salvar_config.configure(text="Ajustes Salvos com Sucesso! ✓", fg_color=ACCENT_GREEN)
         self._safe_after(1600, lambda: self.btn_salvar_config.configure(text="Salvar e Aplicar Ajustes", fg_color=ACCENT_BLUE))
 
@@ -1321,6 +1431,14 @@ class SettingsTab(ctk.CTkScrollableFrame):
             # Um modelo fora da lista (posto à mão no .env) aparece como Smart, o padrão.
             self.seg_modelo.set(next((rotulo for rotulo, modelo in MODELOS_NA_TELA.items() if modelo == cur_model),
                                      ROTULO_DO_PADRAO))
+            if hasattr(self, "lbl_aviso_modelo") and self.lbl_aviso_modelo.winfo_exists():
+                substituido = cfg.get("modelo_llm_substituido")
+                if isinstance(substituido, str) and substituido.strip():
+                    self.lbl_aviso_modelo.configure(
+                        text=f"O modelo {substituido.strip()} não está no catálogo. O Willy está usando o Smart."
+                    )
+                else:
+                    self.lbl_aviso_modelo.configure(text="")
         except Exception as e:  # noqa: BLE001 — Fronteira defensiva de ação em ajustes
             print(f"[SettingsTab] Erro ao aplicar configurações na UI: {e}", file=sys.stderr)
             self._falha_carregamento_config = True

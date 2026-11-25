@@ -260,7 +260,10 @@ class TestSegurarOTransformar(unittest.TestCase):
         )
         h_proc()
         ler.assert_not_called()
+        som.sound_error.assert_not_called()
+        ui.assert_called_once_with("error", "Aguarde o processo atual...", por_cima=True)
         self.assertEqual("preservado", h_proc.__globals__["selected_text_for_transform"])
+        ui.reset_mock()
 
         h_sleep = _funcao_do_willy(
             "on_transform_hotkey",

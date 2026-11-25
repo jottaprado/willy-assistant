@@ -16,6 +16,7 @@ from typing import Any
 from core.storage.caminhos import caminho_dentro_de
 from core.storage.history_store import _atomic_write_json
 from core.storage.settings_store import sanitizar_regras_de_app
+from core.storage.vocabulary_store import _termos_do_vocabulario
 from versao import __version__
 
 _MAX_HISTORICO = 100
@@ -108,6 +109,48 @@ class ProfileManager:
             print(f"[ProfileManager] Erro ao exportar perfil: {e}", file=sys.stderr)
             return False
 
+    def resumir_perfil(self, source_path: str) -> dict[str, Any] | None:
+        """Lê e valida um JSON de perfil sem gravar nada, devolvendo o que seria alterado."""
+        if not source_path or not os.path.exists(source_path):
+            return None
+
+        try:
+            with open(source_path, "r", encoding="utf-8") as f:
+                dados = json.load(f)
+
+            if not isinstance(dados, dict):
+                return None
+
+            pasta_saida = self.config_mgr.outputs_dir
+            settings = self._sanitizar_settings(dados.get("settings"))
+            chave_ignorada = False
+            chave_do_perfil = settings.get("GROQ_API_KEY")
+            chave_atual = self.config_mgr.chave_configurada()
+            if chave_do_perfil and chave_atual:
+                settings.pop("GROQ_API_KEY")
+                chave_ignorada = chave_do_perfil.strip() != chave_atual
+
+            vocab = dados.get("vocabulary")
+            vocab_count = len(_termos_do_vocabulario(vocab)) if isinstance(vocab, str) else None
+            reps = self._sanitizar_substituicoes(dados.get("replacements"))
+            snippets = self._sanitizar_snippets(dados.get("snippets"))
+            historico = self._sanitizar_historico(dados.get("history"), pasta_saida)
+            regras_raw = dados.get("app_rules")
+            regras = sanitizar_regras_de_app(regras_raw) if isinstance(regras_raw, list) else None
+
+            return {
+                "settings_count": len(settings),
+                "chave_ignorada": chave_ignorada,
+                "vocabulary_count": vocab_count,
+                "replacements": reps,
+                "snippets_count": len(snippets) if snippets is not None else None,
+                "history_count": len(historico) if historico is not None else None,
+                "app_rules": regras,
+            }
+        except Exception as e:  # noqa: BLE001 — fronteira de leitura de perfil externo
+            print(f"[ProfileManager] Erro ao resumir perfil: {e}", file=sys.stderr)
+            return None
+
     def import_profile(self, source_path: str, snippet_mgr=None) -> bool:
         """
         Restaura o perfil completo do Willy a partir de um arquivo JSON.
@@ -154,6 +197,7 @@ class ProfileManager:
                     and any(tecla_do_atalho(v) == tecla_do_espanhol for k, v in settings.items() if k.endswith("_HOTKEY"))):
                 settings["TRANSLATE_ES_HOTKEY"] = ""
 
+            self.config_mgr.modelo_llm_substituido = None
             if settings:
                 self.config_mgr.save_settings(settings)
 

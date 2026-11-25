@@ -20,6 +20,11 @@ SMART = "openai/gpt-oss-120b"
 CODER = "qwen/qwen3.8-27b"
 PADRAO = SMART
 MODELOS_VALIDOS = frozenset({FLASH, SMART, CODER})
+NOMES_AMIGAVEIS = {
+    FLASH: "Flash",
+    SMART: "Smart",
+    CODER: "Coder",
+}
 
 # Desligados na Groq: o .env de quem escolheu um deles passa para o substituto. As datas são as
 # de desligamento da página de descontinuações.
@@ -83,6 +88,23 @@ def modelo_em_uso(modelo: Any) -> str:
         if valido.lower() == resolvido.lower():
             return valido
     return PADRAO
+
+
+def modelo_desconhecido(modelo: Any) -> bool:
+    """Verdadeiro para um valor não vazio que não está em MODELOS_VALIDOS nem em DESLIGADOS."""
+    nome = str(modelo or "").strip()
+    if not nome:
+        return False
+    nome_lower = nome.lower()
+    if nome_lower in DESLIGADOS:
+        return False
+    return all(valido.lower() != nome_lower for valido in MODELOS_VALIDOS)
+
+
+def nome_amigavel(modelo: Any) -> str:
+    """Nome curto do modelo para mensagens na pílula (Flash, Smart ou Coder)."""
+    resolvido = modelo_em_uso(modelo)
+    return NOMES_AMIGAVEIS.get(resolvido, resolvido)
 
 
 def ordem_de_tentativa(modelo: Any) -> list[str]:

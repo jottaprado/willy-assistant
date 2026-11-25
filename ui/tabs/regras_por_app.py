@@ -127,11 +127,18 @@ class SecaoRegrasPorApp(ctk.CTkFrame):
         self.opt_tom.set(ROTULOS_DE_TOM["default"])
         self.opt_tom.pack(side="left")
         self.opt_modo = ctk.CTkOptionMenu(efeitos, values=list(ROTULOS_DE_MODO.values()), width=140,
-                                          font=ctk.CTkFont(family=FONT_FAMILY, size=12))
+                                          font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+                                          command=self._ao_mudar_modo)
         self.opt_modo.set(ROTULOS_DE_MODO["default"])
         self.opt_modo.pack(side="left", padx=(8, 0))
         self.entry_instrucao = _campo(efeitos, "Instrução extra para a IA (opcional)", 260)
         self.entry_instrucao.pack(side="left", padx=(8, 0), fill="x", expand=True)
+
+        self.lbl_aviso_modo = ctk.CTkLabel(
+            self, text="", anchor="w", justify="left",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11), text_color=APPLE_TEXT_SECONDARY,
+        )
+        self.lbl_aviso_modo.pack(fill="x", padx=16, pady=(4, 0))
 
         acoes = ctk.CTkFrame(self, fg_color="transparent")
         acoes.pack(fill="x", padx=16, pady=(8, 0))
@@ -153,6 +160,18 @@ class SecaoRegrasPorApp(ctk.CTkFrame):
 
     def _status(self, texto: str, ok: bool = True):
         self.lbl_status.configure(text=texto, text_color=APPLE_ACCENT if ok else APPLE_DESTRUCTIVE)
+
+    def _ao_mudar_modo(self, rotulo_modo: str | None = None):
+        rotulo = self.opt_modo.get() if rotulo_modo is None else rotulo_modo
+        modo = next((k for k, v in ROTULOS_DE_MODO.items() if v == rotulo), "default")
+        if modo in ("translate", "translate_es"):
+            self.opt_tom.configure(state="disabled")
+            self.entry_instrucao.configure(state="disabled")
+            self.lbl_aviso_modo.configure(text="Modo de tradução ignora tom e instrução extra.")
+        else:
+            self.opt_tom.configure(state="normal")
+            self.entry_instrucao.configure(state="normal")
+            self.lbl_aviso_modo.configure(text="")
 
     def recarregar(self):
         """Relê as regras em vigor (get_app_rules) e refaz a lista."""
@@ -218,15 +237,16 @@ class SecaoRegrasPorApp(ctk.CTkFrame):
             self._status("Diga o aplicativo (.exe) ou um trecho do título da janela", ok=False)
             return False
         regra = regra[0]
-        if tom == "default" and modo == "default" and not regra["custom_instruction"]:
+        if regra["tone"] == "default" and regra["action_mode"] == "default" and not regra["custom_instruction"]:
             self._status("Escolha um tom, um modo ou uma instrução para a regra", ok=False)
             return False
         if not self._salvar(self._com_regras([regra]), f"Regra salva: {descrever_regra(regra)}"):
             return False
+        self.opt_modo.set(ROTULOS_DE_MODO["default"])
+        self._ao_mudar_modo(ROTULOS_DE_MODO["default"])
         for campo in (self.entry_app, self.entry_titulo, self.entry_instrucao):
             campo.delete(0, "end")
         self.opt_tom.set(ROTULOS_DE_TOM["default"])
-        self.opt_modo.set(ROTULOS_DE_MODO["default"])
         return True
 
     def remover_regra(self, indice: int) -> bool:

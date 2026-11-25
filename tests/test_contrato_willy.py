@@ -444,6 +444,7 @@ class TestContratoDoWillyComAsClasses(unittest.TestCase):
             "onboarding_completed": "onboarding_completed",
             "api_key": "groq_api_key",
             "cofre_ilegivel": "cofre_ilegivel",
+            "modelo_llm_substituido": "modelo_llm_substituido",
         }
         for chave_setting, attr_cfg in mapa_esperado.items():
             setattr(cfg_estrito, attr_cfg, f"sentinela_{attr_cfg}")
@@ -512,6 +513,8 @@ class TestContratoDoWillyComAsClasses(unittest.TestCase):
         cfg_estrito.get_app_context_rules.assert_called_once_with()
         callbacks_dash["on_save_app_rules"]([{"app_exe": "slack.exe"}])
         cfg_estrito.save_app_context_rules.assert_called_once_with([{"app_exe": "slack.exe"}])
+        callbacks_dash["on_summarize_profile"]("perfil.json")
+        cfg_estrito.resumir_perfil.assert_called_once_with("perfil.json")
 
         settings = callbacks_dash["get_settings"]()
         for chave_setting, attr_cfg in mapa_esperado.items():
@@ -541,6 +544,7 @@ class TestContratoDoWillyComAsClasses(unittest.TestCase):
         groq_service = _autospec_com_atributos_de_instancia(GroqService)
         context_manager = create_autospec(ContextManager, spec_set=True)
         config_mgr.get_vocab_terms.return_value = ["FastAPI", "Willy"]
+        config_mgr.load_replacements.return_value = {"vily": "Willy"}
         config_mgr.processing_profile = "puro"
         config_mgr.smart_paragraphing = True
         escopo = {"Optional": Optional, "Tuple": tuple, "config_mgr": config_mgr, "groq_service": groq_service,
@@ -548,15 +552,17 @@ class TestContratoDoWillyComAsClasses(unittest.TestCase):
         exec(compile(ast.Module(body=nos, type_ignores=[]), CAMINHO_WILLY, "exec"), escopo)
         reformatar = escopo["reformatar_texto"]
 
-        groq_service.refine_text.return_value = "Prezados, segue."
-        self.assertEqual("Prezados, segue.", reformatar("segue aí", "formal"))
+        groq_service.refine_text.return_value = "Qual é o status do vily."
+        self.assertEqual("Qual é o status do Willy?", reformatar("segue aí", "formal"))
         groq_service.refine_text.assert_called_once_with(
             "segue aí", enabled=True, tone="formal", smart_paragraphing=True, profile="dev", estrito=True)
 
         termos = "Termos da pessoa, que ficam como estão: FastAPI, Willy"
-        reformatar("bom dia", "translate")
+        groq_service.translate_to_english.return_value = "Hello vily."
+        self.assertEqual("Hello Willy.", reformatar("bom dia", "translate"))
         groq_service.translate_to_english.assert_called_once_with("bom dia", extra_context=termos, estrito=True)
-        reformatar("bom dia", "translate_es")
+        groq_service.translate_to_spanish.return_value = "Hola vily."
+        self.assertEqual("Hola Willy.", reformatar("bom dia", "translate_es"))
         groq_service.translate_to_spanish.assert_called_once_with("bom dia", extra_context=termos, estrito=True)
         with self.assertRaises(ValueError):
             reformatar("bom dia", "pirata")

@@ -466,6 +466,115 @@ class TestImportNaUI(unittest.TestCase):
                         return
         self.fail("on_import_profile não encontrado em willy.py")
 
+    def test_importar_perfil_preserva_aviso_de_modelo_desconhecido_e_avisa_pilula(self):
+        ui = MagicMock()
+        self.cfg = MagicMock()
+        self.cfg.import_profile.return_value = True
+        self.cfg.chave_do_perfil_ignorada = False
+        self.cfg.modelo_llm_substituido = "modelo-experimental-longo-999"
+        self.cfg.llm_model = "openai/gpt-oss-120b"
+        self.snippets = MagicMock()
+        self.orquestrador = MagicMock()
+        self.tray = MagicMock()
+        self.dashboard, self.despachar = MagicMock(), MagicMock()
+
+        def _salvar_simulando_limpeza(_dados):
+            # Simula ConfigManager.save_settings limpando modelo_llm_substituido ao receber SMART.
+            self.cfg.modelo_llm_substituido = None
+
+        fn = _funcao_do_willy(
+            "importar_perfil", config_mgr=self.cfg, snippet_mgr=self.snippets,
+            dashboard_save_settings=_salvar_simulando_limpeza, hotkey_orchestrator=self.orquestrador,
+            tray_mgr=self.tray, dashboard=self.dashboard, safe_dispatch_ui=self.despachar,
+            atualizar_ui=ui,
+        )
+        self.assertIs(True, fn("perfil.json"))
+        self.assertEqual("modelo-experimental-longo-999", self.cfg.modelo_llm_substituido)
+        ui.assert_called_once()
+        estado, texto = ui.call_args.args[:2]
+        self.assertEqual("warning", estado)
+        self.assertIn("Smart", texto)
+        self.assertLessEqual(len(texto), 45)
+
+
+class TestResumoDePerfil(unittest.TestCase):
+    def setUp(self):
+        self.pasta = isolar_config(self)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cfg = ConfigManager()
+        self.cfg.save_settings({"GROQ_API_KEY": "gsk_atual_teste"})
+
+    def _gravar(self, nome, conteudo):
+        caminho = os.path.join(self.tmp.name, nome)
+        with open(caminho, "w", encoding="utf-8") as f:
+            if isinstance(conteudo, str):
+                f.write(conteudo)
+            else:
+                json.dump(conteudo, f, ensure_ascii=False)
+        return caminho
+
+    def test_resumir_perfil_invalido_ausente_ou_nao_dict_devolve_none(self):
+        from core.storage.profile_manager import ProfileManager
+
+        pm = ProfileManager(self.cfg)
+        self.assertIsNone(pm.resumir_perfil(os.path.join(self.tmp.name, "nao_existe.json")))
+        self.assertIsNone(pm.resumir_perfil(self._gravar("quebrado.json", "{invalido")))
+        self.assertIsNone(pm.resumir_perfil(self._gravar("lista.json", [1, 2, 3])))
+
+    def test_resumir_perfil_completo_nao_grava_nada_e_sanitiza_secoes(self):
+        from core.storage.profile_manager import ProfileManager
+
+        perfil = {
+            "settings": {
+                "GROQ_API_KEY": "gsk_outra_conta",
+                "OUTPUT_TONE": "formal",
+                "SILENCE_SECONDS": 2.5,
+            },
+            "vocabulary": "# comentario\nDocker, FastAPI\nKubernetes\n",
+            "replacements": {"kubernetis": "Kubernetes", "fast api": "FastAPI"},
+            "snippets": [{"trigger": "meu deploy", "content": "checklist de deploy"}],
+            "history": [{"text": "Primeiro registro tecnico.", "mode": "transcribe"}],
+            "app_rules": [
+                {"app_exe": "code.exe", "tone": "technical", "custom_instruction": "preservar identificadores"},
+                {"app_exe": "slack.exe", "action_mode": "translate_es", "tone": "formal", "custom_instruction": "morta"},
+            ],
+        }
+        caminho = self._gravar("completo.json", perfil)
+        antes_tom = self.cfg.output_tone
+        antes_reps = self.cfg.load_replacements()
+        antes_regras = self.cfg.get_app_context_rules()
+
+        resumo = ProfileManager(self.cfg).resumir_perfil(caminho)
+        self.assertIsNotNone(resumo)
+        self.assertEqual(2, resumo["settings_count"])
+        self.assertIs(True, resumo["chave_ignorada"])
+        self.assertEqual(3, resumo["vocabulary_count"])
+        self.assertEqual({"kubernetis": "Kubernetes", "fast api": "FastAPI"}, resumo["replacements"])
+        self.assertEqual(1, resumo["snippets_count"])
+        self.assertEqual(1, resumo["history_count"])
+        self.assertEqual(2, len(resumo["app_rules"]))
+        self.assertEqual("default", resumo["app_rules"][1]["tone"])
+        self.assertEqual("", resumo["app_rules"][1]["custom_instruction"])
+
+        # Nenhuma escrita ocorreu no disco nem no ConfigManager.
+        self.assertEqual(antes_tom, self.cfg.output_tone)
+        self.assertEqual(antes_reps, self.cfg.load_replacements())
+        self.assertEqual(antes_regras, self.cfg.get_app_context_rules())
+
+    def test_resumir_perfil_vazio_retorna_secoes_opcionais_como_none(self):
+        from core.storage.profile_manager import ProfileManager
+
+        caminho = self._gravar("vazio.json", {})
+        resumo = ProfileManager(self.cfg).resumir_perfil(caminho)
+        self.assertEqual(0, resumo["settings_count"])
+        self.assertIs(False, resumo["chave_ignorada"])
+        self.assertIsNone(resumo["vocabulary_count"])
+        self.assertIsNone(resumo["replacements"])
+        self.assertIsNone(resumo["snippets_count"])
+        self.assertIsNone(resumo["history_count"])
+        self.assertIsNone(resumo["app_rules"])
+
 
 if __name__ == "__main__":
     unittest.main()

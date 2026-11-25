@@ -60,12 +60,18 @@ def sanitizar_regras_de_app(regras: Any) -> list[dict[str, str]]:
         tom = regra.get("tone")
         modo = regra.get("action_mode")
         instrucao = regra.get("custom_instruction")
+        modo_limpo = modo if modo in MODOS_DA_REGRA else "default"
+        eh_traducao = modo_limpo in ("translate", "translate_es")
         limpas.append({
             "app_exe": app,
             "title_contains": titulo,
-            "tone": tom if tom in TONS_DA_REGRA else "default",
-            "action_mode": modo if modo in MODOS_DA_REGRA else "default",
-            "custom_instruction": instrucao.strip()[:MAX_INSTRUCAO_DA_REGRA] if isinstance(instrucao, str) else "",
+            "tone": "default" if eh_traducao else (tom if tom in TONS_DA_REGRA else "default"),
+            "action_mode": modo_limpo,
+            "custom_instruction": (
+                ""
+                if eh_traducao
+                else (instrucao.strip()[:MAX_INSTRUCAO_DA_REGRA] if isinstance(instrucao, str) else "")
+            ),
         })
         if len(limpas) == MAX_REGRAS_DE_APP:
             break
