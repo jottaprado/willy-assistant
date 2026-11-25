@@ -16,7 +16,7 @@ import threading
 import time
 import unittest
 from types import SimpleNamespace
-from unittest.mock import create_autospec, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 import customtkinter as ctk
 
@@ -511,6 +511,53 @@ class TestTraducaoDeTextoNaGroq(unittest.TestCase):
         self.assertIn("Devolva esse texto em espanhol.", sistema_es)
         self.assertNotIn("Devolva esse texto em inglês.", sistema_es)
         self.assertIn("Termos: Willy", sistema_es)
+
+
+class TestPosProcessamentoReformatarTexto(unittest.TestCase):
+    def _carregar_reformatar(self, cfg, groq_svc):
+        import ast
+        import os
+
+        caminho = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "willy.py")
+        with open(caminho, encoding="utf-8") as f:
+            arvore = ast.parse(f.read(), caminho)
+        nos = [
+            no for no in arvore.body
+            if (isinstance(no, ast.FunctionDef) and no.name == "reformatar_texto")
+            or (isinstance(no, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "TONS_DO_REFORMATAR"
+                                                   for t in no.targets))
+        ]
+        escopo = {"config_mgr": cfg, "groq_service": groq_svc}
+        exec(compile(ast.Module(body=nos, type_ignores=[]), caminho, "exec"), escopo)
+        return escopo["reformatar_texto"], escopo["TONS_DO_REFORMATAR"]
+
+    def test_tons_aplicam_pontuar_perguntas_e_substituicoes(self):
+        cfg = MagicMock()
+        cfg.get_vocab_terms.return_value = ["Kubernetes"]
+        cfg.processing_profile = "dev"
+        cfg.smart_paragraphing = True
+        cfg.load_replacements.return_value = {"kubernetis": "Kubernetes"}
+        svc = MagicMock()
+        svc.refine_text.return_value = "Qual é o status do kubernetis."
+
+        reformatar, tons = self._carregar_reformatar(cfg, svc)
+        for tom in tons:
+            with self.subTest(tom=tom):
+                saida = reformatar("qual o status do kubernetis", tom)
+                self.assertEqual("Qual é o status do Kubernetes?", saida)
+
+    def test_traducoes_aplicam_substituicoes_sem_pontuar_perguntas(self):
+        cfg = MagicMock()
+        cfg.get_vocab_terms.return_value = ["Kubernetes"]
+        cfg.load_replacements.return_value = {"kubernetis": "Kubernetes"}
+        svc = MagicMock()
+        # Frase que pontuar_perguntas em português transformaria '?' em '.', provando que não roda em traduções.
+        svc.translate_to_english.return_value = "Ou seja, check the kubernetis pod status?"
+        svc.translate_to_spanish.return_value = "Ou seja, revisa el estado de kubernetis hoy?"
+
+        reformatar, _ = self._carregar_reformatar(cfg, svc)
+        self.assertEqual("Ou seja, check the Kubernetes pod status?", reformatar("texto", "translate"))
+        self.assertEqual("Ou seja, revisa el estado de Kubernetes hoy?", reformatar("texto", "translate_es"))
 
 
 if __name__ == "__main__":

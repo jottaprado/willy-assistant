@@ -234,12 +234,26 @@ class TestTabSettings(unittest.TestCase):
         self.assertEqual(tab.entry_key.cget("show"), "•")
 
     def test_exportar_e_importar_perfil(self):
-        """Testa as rotinas de exportação e importação de perfil."""
+        """Testa as rotinas de exportação e importação de perfil com confirmação do modal."""
+        import json
+        import os
+        import tempfile
+
         export_chamado = []
         import_chamado = []
 
+        resumo_ok = {
+            "settings_count": 2,
+            "chave_ignorada": False,
+            "vocabulary_count": None,
+            "replacements": None,
+            "snippets_count": None,
+            "history_count": None,
+            "app_rules": None,
+        }
         callbacks = {
             "on_export_profile": lambda path, incluir: export_chamado.append((path, incluir)) or True,
+            "on_summarize_profile": lambda path: resumo_ok,
             "on_import_profile": lambda path: import_chamado.append(path) or True,
             "get_settings": lambda: {"refine_prompt": True},
             "get_app_rules": list,
@@ -253,9 +267,16 @@ class TestTabSettings(unittest.TestCase):
             tab.exportar_perfil_json()
             self.assertEqual(export_chamado, [("C:/fake/perfil.json", False), ("C:/fake/perfil.json", True)])
 
-        with patch("customtkinter.filedialog.askopenfilename", return_value="C:/fake/perfil_in.json"):
-            tab.importar_perfil_json()
-            self.assertEqual(import_chamado, ["C:/fake/perfil_in.json"])
+        with tempfile.TemporaryDirectory() as td:
+            caminho = os.path.join(td, "perfil_in.json")
+            with open(caminho, "w", encoding="utf-8") as f:
+                json.dump({"settings": {"OUTPUT_TONE": "formal"}}, f)
+            with patch("tkinter.filedialog.askopenfilename", return_value=caminho):
+                tab.importar_perfil_json()
+            self.assertEqual(import_chamado, [], "não importa antes da confirmação no modal")
+            self.assertIsNotNone(getattr(tab, "_modal_importacao", None))
+            tab._modal_importacao.confirmar()
+            self.assertEqual(import_chamado, [caminho])
 
     def test_dashboard_delegacao_settings(self):
         """Valida que WillyDashboard instancia a aba modular e delega todos os atributos e métodos."""
@@ -331,8 +352,18 @@ class TestTabSettings(unittest.TestCase):
 
     def test_exportar_e_importar_perfil_exibem_feedback_em_falha(self):
         """Retorno False em on_export_profile / on_import_profile deve atualizar o texto do botão com aviso de falha."""
+        resumo_min = {
+            "settings_count": 1,
+            "chave_ignorada": False,
+            "vocabulary_count": None,
+            "replacements": None,
+            "snippets_count": None,
+            "history_count": None,
+            "app_rules": None,
+        }
         tab = build_tab_settings(self.root, callbacks={
             "on_export_profile": lambda _path, _inc: False,
+            "on_summarize_profile": lambda _path: resumo_min,
             "on_import_profile": lambda _path: False,
         })
         self.addCleanup(lambda: tab.winfo_exists() and tab.destroy())
@@ -343,7 +374,129 @@ class TestTabSettings(unittest.TestCase):
 
         with patch("tkinter.filedialog.askopenfilename", return_value="C:/fake/perfil.json"):
             tab.importar_perfil_json()
+        tab._modal_importacao.confirmar()
         self.assertIn("Falha", tab.btn_importar_perfil.cget("text"))
+
+    def test_importar_perfil_mostra_resumo_completo_e_cancela_sem_restaurar(self):
+        """Modal de importação lista seções, trunca instrução (~80 chars), limita 10 substituições e respeita cancelar."""
+        importado = []
+        reps = {f"termo_{i}": f"Termo_{i}" for i in range(12)}
+        instrucao_longa = "Instrução detalhada de teste técnico " + ("x" * 90)
+        resumo = {
+            "settings_count": 5,
+            "chave_ignorada": True,
+            "vocabulary_count": 4,
+            "replacements": reps,
+            "snippets_count": 2,
+            "history_count": 3,
+            "app_rules": [
+                {
+                    "app_exe": "code.exe",
+                    "title_contains": "backend",
+                    "tone": "technical",
+                    "action_mode": "transcribe",
+                    "custom_instruction": instrucao_longa,
+                }
+            ],
+        }
+        tab = build_tab_settings(self.root, callbacks={
+            "on_summarize_profile": lambda _path: resumo,
+            "on_import_profile": lambda p: importado.append(p) or True,
+            "get_app_rules": list,
+        })
+        self.addCleanup(lambda: tab.winfo_exists() and tab.destroy())
+
+        with patch("tkinter.filedialog.askopenfilename", return_value="C:/fake/perfil_completo.json"):
+            tab.importar_perfil_json()
+
+        modal = tab._modal_importacao
+        self.assertIsNotNone(modal)
+        self.assertEqual("Restaurar", modal.btn_excluir.cget("text"))
+
+        def _textos(widget):
+            achados = []
+            if isinstance(widget, ctk.CTkLabel):
+                achados.append(widget.cget("text"))
+            for filho in widget.winfo_children():
+                achados.extend(_textos(filho))
+            return achados
+
+        corpo = "\n".join(_textos(modal))
+        self.assertIn("Ajustes", corpo)
+        self.assertIn("chave", corpo.lower())
+        self.assertIn("Vocabulário", corpo)
+        self.assertIn("Templates", corpo)
+        self.assertIn("Histórico", corpo)
+        self.assertIn("Regras por aplicativo", corpo)
+        self.assertIn("code.exe", corpo)
+        self.assertNotIn(instrucao_longa, corpo)
+        self.assertIn("Substituições", corpo)
+        self.assertIn("e mais 2", corpo)
+
+        modal.btn_cancelar.invoke()
+        self.assertEqual([], importado)
+
+    def test_importar_perfil_invalido_mostra_falha_sem_abrir_modal(self):
+        """Se o resumo retorna None (arquivo inválido), não abre modal nem chama on_import_profile."""
+        importado = []
+        tab = build_tab_settings(self.root, callbacks={
+            "on_summarize_profile": lambda _path: None,
+            "on_import_profile": lambda p: importado.append(p) or True,
+            "get_app_rules": list,
+        })
+        self.addCleanup(lambda: tab.winfo_exists() and tab.destroy())
+
+        with patch("tkinter.filedialog.askopenfilename", return_value="C:/fake/invalido.json"):
+            tab.importar_perfil_json()
+
+        self.assertIsNone(getattr(tab, "_modal_importacao", None))
+        self.assertEqual([], importado)
+        self.assertIn("Falha", tab.btn_importar_perfil.cget("text"))
+
+    def test_importar_perfil_sem_secoes_abre_modal_e_restaura_ao_confirmar(self):
+        """Perfil vazio ({}) ainda passa pela confirmação e executa on_import_profile se confirmado."""
+        importado = []
+        resumo_vazio = {
+            "settings_count": 0,
+            "chave_ignorada": False,
+            "vocabulary_count": None,
+            "replacements": None,
+            "snippets_count": None,
+            "history_count": None,
+            "app_rules": None,
+        }
+        tab = build_tab_settings(self.root, callbacks={
+            "on_summarize_profile": lambda _path: resumo_vazio,
+            "on_import_profile": lambda p: importado.append(p) or True,
+            "get_app_rules": list,
+        })
+        self.addCleanup(lambda: tab.winfo_exists() and tab.destroy())
+
+        with patch("tkinter.filedialog.askopenfilename", return_value="C:/fake/vazio.json"):
+            tab.importar_perfil_json()
+        self.assertIsNotNone(tab._modal_importacao)
+        tab._modal_importacao.btn_excluir.invoke()
+        self.assertEqual(["C:/fake/vazio.json"], importado)
+
+    def test_aviso_de_modelo_fora_do_catalogo_nos_ajustes(self):
+        """Ajustes mostra aviso na seção Modelo LLM quando modelo_llm_substituido está preenchido e limpa ao salvar."""
+        tab = build_tab_settings(self.root, callbacks={
+            "get_app_rules": list,
+            "on_save_settings": lambda _d: None,
+        })
+        self.addCleanup(lambda: tab.winfo_exists() and tab.destroy())
+
+        tab.recarregar_dados({"modelo_llm_substituido": "modelo-desconhecido-x"})
+        self.assertEqual(
+            "O modelo modelo-desconhecido-x não está no catálogo. O Willy está usando o Smart.",
+            tab.lbl_aviso_modelo.cget("text"),
+        )
+
+        tab.salvar_configuracoes()
+        self.assertEqual("", tab.lbl_aviso_modelo.cget("text"))
+
+        tab.recarregar_dados({"modelo_llm_substituido": None})
+        self.assertEqual("", tab.lbl_aviso_modelo.cget("text"))
 
     def test_worker_teste_microfone_preserva_causa_e_sinaliza_erro(self):
         """Falha em negociar_stream deve preservar a exceção original em stderr e sinalizar no botão."""

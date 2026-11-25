@@ -110,6 +110,31 @@ class TestSanitizarRegras(unittest.TestCase):
     def test_limite_de_regras(self):
         self.assertEqual(MAX_REGRAS_DE_APP, len(sanitizar_regras_de_app([{"app_exe": f"a{i}.exe"} for i in range(80)])))
 
+    def test_modo_de_traducao_limpa_tom_e_instrucao_extra(self):
+        for modo in ("translate", "translate_es"):
+            with self.subTest(modo=modo):
+                regra = sanitizar_regras_de_app([{
+                    "app_exe": "slack.exe",
+                    "title_contains": "geral",
+                    "tone": "formal",
+                    "action_mode": modo,
+                    "custom_instruction": "responder em topicos",
+                }])[0]
+                self.assertEqual(modo, regra["action_mode"])
+                self.assertEqual("default", regra["tone"])
+                self.assertEqual("", regra["custom_instruction"])
+
+        for modo in ("default", "transcribe"):
+            with self.subTest(modo=modo):
+                regra = sanitizar_regras_de_app([{
+                    "app_exe": "code.exe",
+                    "tone": "technical",
+                    "action_mode": modo,
+                    "custom_instruction": "manter termos tecnicos",
+                }])[0]
+                self.assertEqual("technical", regra["tone"])
+                self.assertEqual("manter termos tecnicos", regra["custom_instruction"])
+
 
 class TestPersistenciaDasRegras(unittest.TestCase):
     def setUp(self):
@@ -400,14 +425,59 @@ class TestSecaoNosAjustes(unittest.TestCase):
         self.assertEqual("slack.exe", self.secao.entry_app.get())
         self.secao.entry_titulo.insert(0, "Geral")
         self.secao.opt_tom.set("Conciso")
-        self.secao.opt_modo.set("Traduzir → EN")
+        self.secao.opt_modo.set("Ditado")
         self.secao.entry_instrucao.insert(0, "sem emojis")
         self.secao.btn_adicionar.invoke()
-        self.assertEqual([_regra(app_exe="slack.exe", title_contains="geral", tone="concise", action_mode="translate",
+        self.assertEqual([_regra(app_exe="slack.exe", title_contains="geral", tone="concise", action_mode="transcribe",
                                  custom_instruction="sem emojis")], self.cfg.app_context_rules)
         self.assertEqual(self.cfg.app_context_rules, ConfigManager().app_context_rules, "gravado no disco")
-        self.assertEqual(["slack.exe · título contém “geral” → Conciso · Traduzir → EN · instrução extra"], self._linhas())
+        self.assertEqual(["slack.exe · título contém “geral” → Conciso · Ditado · instrução extra"], self._linhas())
         self.assertEqual("", self.secao.entry_app.get(), "o formulário volta vazio")
+
+    def test_modo_traducao_desabilita_tom_e_instrucao_e_normaliza_ao_salvar(self):
+        self.secao.entry_app.insert(0, "slack.exe")
+        self.secao.opt_tom.set("Formal")
+        self.secao.entry_instrucao.insert(0, "usar linguagem formal")
+
+        for rotulo, modo in (("Traduzir → EN", "translate"), ("Traduzir → ES", "translate_es")):
+            with self.subTest(modo=modo):
+                self.secao.opt_modo.set(rotulo)
+                self.secao._ao_mudar_modo(rotulo)
+                self.assertEqual("disabled", self.secao.opt_tom.cget("state"))
+                self.assertEqual("disabled", self.secao.entry_instrucao.cget("state"))
+                self.assertIn("tradução", self.secao.lbl_aviso_modo.cget("text").lower())
+
+                self.secao.opt_modo.set("Ditado")
+                self.secao._ao_mudar_modo("Ditado")
+                self.assertEqual("normal", self.secao.opt_tom.cget("state"))
+                self.assertEqual("normal", self.secao.entry_instrucao.cget("state"))
+                self.assertEqual("", self.secao.lbl_aviso_modo.cget("text"))
+
+        # Salvar regra de tradução descarta tom e instrução mortos e reabilita os controles.
+        self.secao.opt_modo.set("Traduzir → ES")
+        self.secao._ao_mudar_modo("Traduzir → ES")
+        self.assertTrue(self.secao.adicionar_regra())
+        self.assertEqual(
+            [_regra(app_exe="slack.exe", tone="default", action_mode="translate_es", custom_instruction="")],
+            self.cfg.app_context_rules,
+        )
+        self.assertEqual("normal", self.secao.opt_tom.cget("state"))
+        self.assertEqual("normal", self.secao.entry_instrucao.cget("state"))
+        self.assertEqual("", self.secao.entry_instrucao.get())
+        self.assertEqual("", self.secao.lbl_aviso_modo.cget("text"))
+
+        # Arquivo editado à mão e perfil importado passam pela mesma fronteira de sanitização.
+        with open(self.cfg.app_rules_store.rules_file, "w", encoding="utf-8") as f:
+            json.dump([{
+                "app_exe": "teams.exe",
+                "tone": "concise",
+                "action_mode": "translate",
+                "custom_instruction": "instrucao morta manual",
+            }], f)
+        self.assertEqual(
+            [_regra(app_exe="teams.exe", tone="default", action_mode="translate", custom_instruction="")],
+            self.cfg.app_rules_store.load_rules(),
+        )
 
     def test_mesmo_app_e_titulo_troca_a_regra_no_lugar(self):
         self.cfg.save_app_context_rules([{"app_exe": "code.exe", "tone": "technical"}, {"app_exe": "slack.exe", "tone": "concise"}])

@@ -867,6 +867,7 @@ def monitorar_hold(combo: str):
 def _pronto_para_gravar() -> bool:
     """Guarda unificada de prontidão dos atalhos de gravação (is_processing, is_awake, groq_api_key)."""
     if getattr(audio_mgr, "is_processing", False):
+        atualizar_ui("error", "Aguarde o processo atual...", por_cima=True)
         return False
 
     if not audio_mgr.is_awake:
@@ -1451,6 +1452,12 @@ def capturar_e_testar_ditado(stop_event=None, on_level=None) -> tuple[bool, str,
     return True, bruto.strip(), (refinado or bruto).strip(), ""
 
 
+def _aviso_pilula_modelo_desconhecido(valor: str) -> str:
+    nome = valor.strip()
+    curto = nome if len(nome) <= 11 else nome[:10] + "…"
+    return f"Modelo {curto} desconhecido: usando Smart"
+
+
 def importar_perfil(caminho: str) -> bool:
     """Restaura um perfil e o aplica no processo em execução. Devolve se deu certo.
 
@@ -1460,6 +1467,7 @@ def importar_perfil(caminho: str) -> bool:
     """
     if not config_mgr.import_profile(caminho, snippet_mgr=snippet_mgr):
         return False
+    modelo_substituido = getattr(config_mgr, "modelo_llm_substituido", None)
     # Os campos que dashboard_save_settings aplica no processo vivo (a chave da Groq ele
     # aplica sempre).
     dashboard_save_settings({
@@ -1472,12 +1480,21 @@ def importar_perfil(caminho: str) -> bool:
         # de reiniciar o Willy).
         "WAKE_WORD_ENABLED": config_mgr.wake_word_enabled,
     })
+    if isinstance(modelo_substituido, str) and modelo_substituido.strip():
+        # dashboard_save_settings gravou o modelo normalizado e limparia o aviso antes da UI lê-lo.
+        config_mgr.modelo_llm_substituido = modelo_substituido
     if hotkey_orchestrator:
         hotkey_orchestrator.registrar_todos()
     if dashboard:
         # Todas as abas: o perfil trouxe vocabulário, templates e atalhos novos, e a aba
         # Atalhos e o mapa de conflitos do Keycap ficavam com as combinações de antes.
         safe_dispatch_ui(lambda: dashboard.recarregar_dados(completo=True))
+    if isinstance(modelo_substituido, str) and modelo_substituido.strip():
+        aviso_ui = globals().get("atualizar_ui")
+        if callable(aviso_ui):
+            nome = modelo_substituido.strip()
+            curto = nome if len(nome) <= 11 else nome[:10] + "…"
+            aviso_ui("warning", f"Modelo {curto} desconhecido: usando Smart")
     if config_mgr.chave_do_perfil_ignorada and tray_mgr:
         # Notificação do Windows, e não a pílula: o estado "success" some em 900 ms e corta o texto.
         tray_mgr.notify("Perfil restaurado", "A chave da Groq do perfil foi ignorada: a sua continua.")
@@ -1569,19 +1586,28 @@ def reformatar_texto(texto: str, acao: str) -> str:
     Chamada pela aba numa thread dela, nunca na da interface. Falha da IA ou da rede sobe
     (FalhaDoLLM, erro do cliente): a aba avisa, e o item fica como estava.
     """
+    from core.text_processing import TextProcessor
+
     termos = config_mgr.get_vocab_terms()
     termos_fixos = f"Termos da pessoa, que ficam como estão: {', '.join(termos)}" if termos else ""
     if acao == "translate":
-        return groq_service.translate_to_english(texto, extra_context=termos_fixos, estrito=True)
-    if acao == "translate_es":
-        return groq_service.translate_to_spanish(texto, extra_context=termos_fixos, estrito=True)
-    if acao in TONS_DO_REFORMATAR:
+        resultado = groq_service.translate_to_english(texto, extra_context=termos_fixos, estrito=True)
+    elif acao == "translate_es":
+        resultado = groq_service.translate_to_spanish(texto, extra_context=termos_fixos, estrito=True)
+    elif acao in TONS_DO_REFORMATAR:
         # O perfil Puro tira o LLM do ditado, pela latência; aqui a pessoa pediu a IA num clique.
         perfil = "dev" if config_mgr.processing_profile == "puro" else config_mgr.processing_profile
-        return groq_service.refine_text(texto, enabled=True, tone=acao,
-                                        smart_paragraphing=config_mgr.smart_paragraphing,
-                                        profile=perfil, estrito=True)
-    raise ValueError(f"ação de reformatação desconhecida: {acao!r}")
+        resultado = groq_service.refine_text(texto, enabled=True, tone=acao,
+                                             smart_paragraphing=config_mgr.smart_paragraphing,
+                                             profile=perfil, estrito=True)
+        resultado = TextProcessor.pontuar_perguntas(resultado)
+    else:
+        raise ValueError(f"ação de reformatação desconhecida: {acao!r}")
+
+    reps = config_mgr.load_replacements()
+    if isinstance(reps, dict) and reps:
+        resultado = TextProcessor.apply_replacements(resultado, reps)
+    return resultado
 
 
 def transcrever_arquivo_em_segundo_plano(caminho_arquivo: str) -> None:
@@ -1729,6 +1755,7 @@ def main():
         "on_export_profile": lambda path, incluir_historico=False: config_mgr.export_profile(
             path, snippet_mgr=snippet_mgr, include_history=incluir_historico
         ),
+        "on_summarize_profile": config_mgr.resumir_perfil,
         "on_import_profile": importar_perfil,
         "get_replacements": config_mgr.load_replacements,
         "on_save_replacement": config_mgr.add_replacement,
@@ -1775,6 +1802,7 @@ def main():
             "onboarding_completed": getattr(config_mgr, "onboarding_completed", True),
             "api_key": config_mgr.groq_api_key,
             "cofre_ilegivel": config_mgr.cofre_ilegivel,
+            "modelo_llm_substituido": config_mgr.modelo_llm_substituido,
             "autostart": AutoStartManager.is_enabled()
         },
         "on_undo_dictation": desfazer_ultimo_ditado,
@@ -1910,6 +1938,9 @@ def main():
         audio_mgr.ensure_stream(callback_audio)
     
     iniciar_dreno_ui(root)
+
+    if isinstance(config_mgr.modelo_llm_substituido, str) and config_mgr.modelo_llm_substituido.strip():
+        atualizar_ui("warning", _aviso_pilula_modelo_desconhecido(config_mgr.modelo_llm_substituido))
 
     try:
         root.mainloop()

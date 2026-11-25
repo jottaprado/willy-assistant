@@ -8,6 +8,7 @@ import math
 import os
 import re
 import sys
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -461,6 +462,15 @@ class GroqService:
         # Um modelo desligado pela Groq vira o substituto aqui também, e não só na config.
         self.llm_model = modelos_llm.modelo_em_uso(llm_model)
         self._client: Groq | None = None
+        self._local = threading.local()
+
+    def fallback_429_recente(self) -> tuple[str, str] | None:
+        """Retorna (modelo_escolhido, modelo_usado) se a última chamada nesta thread caiu por 429."""
+        return getattr(self._local, "fallback_429", None)
+
+    def limpar_fallback_429(self) -> None:
+        """Limpa o registro de fallback 429 da thread atual."""
+        self._local.fallback_429 = None
 
     def set_llm_model(self, model_name: str) -> None:
         """Altera o modelo LLM utilizado para refino e resumos."""
@@ -538,6 +548,7 @@ class GroqService:
         falha passa, e o reenvio pode dar certo nele. Subia o do último: um 429 no escolhido e um
         404 no Flash viravam recusa, e o reenvio saía da fila.
         """
+        self._local.fallback_429 = None
         cliente = cliente.with_options(max_retries=0)
         texto_entrada = (
             entrada
@@ -547,6 +558,7 @@ class GroqService:
         ultima: BaseException | None = None
         passageira: BaseException | None = None
         recusa_vista: RecusaDoLLM | None = None
+        teve_429 = False
         familias_recusa_generica: set[str] = set()
         modelos = list(modelos_llm.ordem_de_tentativa(self.llm_model))
         i = 0
@@ -559,12 +571,18 @@ class GroqService:
                     if aceitar_recusa_entre_familias and not _eh_meta_recusa(resposta, texto_entrada):
                         familias_recusa_generica.add(_familia_do_modelo(modelo))
                         if len(familias_recusa_generica) >= 2:
+                            if teve_429 and modelo != modelos[0]:
+                                self._local.fallback_429 = (modelos[0], modelo)
                             return resposta
                     raise RecusaDoLLM(modelo, resposta)
+                if teve_429 and modelo != modelos[0]:
+                    self._local.fallback_429 = (modelos[0], modelo)
                 return resposta
             # A resposta cortada no teto ou a recusa de assistente passam para o próximo modelo,
             # e um 429 de antes continua sendo o erro que sobe.
             except (*_ERROS_DE_MODELO, RespostaCortada, RecusaDoLLM) as e:
+                if isinstance(e, groq.RateLimitError):
+                    teve_429 = True
                 if isinstance(e, RecusaDoLLM):
                     recusa_vista = recusa_vista or e
                     if modelos_llm.CODER not in modelos:
@@ -967,6 +985,7 @@ class GroqService:
             sistema = prompt + (f"\n\n{extra_context}" if extra_context else "")
             try:
                 partes: list[str] | None = []
+                fallback_traducao: tuple[str, str] | None = None
                 for pedaco, separador in _pedacos_da_traducao(text, self.PEDACO_DA_TRADUCAO):
                     limites_seguidos = 0
                     while True:
@@ -975,6 +994,9 @@ class GroqService:
                                 {"role": "system", "content": sistema},
                                 {"role": "user", "content": pedaco},
                             ], temperature=0.2, max_tokens=len(pedaco) // 3 + 256, timeout=20.0, inteira=True), pedaco)
+                            fb = self.fallback_429_recente()
+                            if fb is not None and fallback_traducao is None:
+                                fallback_traducao = fb
                             break
                         except groq.RateLimitError as e:
                             limites_seguidos += 1
@@ -995,6 +1017,7 @@ class GroqService:
                         break
                     partes.append(traduzido + separador)
                 if partes is not None:
+                    self._local.fallback_429 = fallback_traducao
                     return "".join(partes)
             except ERROS_PASSAGEIROS as e:
                 print(f"[GroqService] Erro passageiro ao traduzir para {idioma}: {e!r}", file=sys.stderr)

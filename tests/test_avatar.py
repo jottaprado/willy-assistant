@@ -190,6 +190,8 @@ class TestT21DashboardNavegacaoETema(unittest.TestCase):
             self.assertEqual(cbs[chave], getattr(cfg, metodo), f"{chave} não aponta para cfg.{metodo}")
         self.assertEqual(cbs["on_play_audio"], ConfigManager.open_file)
         self.assertEqual(cbs["on_open_file"], ConfigManager.open_file)
+        self.assertEqual(cbs["on_summarize_profile"], cfg.resumir_perfil)
+        self.assertIsNone(cbs["get_settings"]()["modelo_llm_substituido"])
         self.assertIsNone(cbs["get_last_external_app"]())
 
     def test_t5_construir_callbacks_padrao_expoe_cofre_ilegivel_em_get_settings(self):

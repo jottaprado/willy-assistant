@@ -69,6 +69,47 @@ class TestAtualizarUi(unittest.TestCase):
         self.assertIs(False, args[-1])
         self.assertEqual("success", self.pill.current_state)
 
+    def test_atalho_durante_processamento_avisa_por_cima_sem_som_e_pilula_restaura_estado(self):
+        """Item 1.2: Atalho de gravação durante processamento mostra aviso por cima e volta ao mesmo processing."""
+        msg_proc = "Aguardando a cota da Groq (18 s)..."
+        self.pill.show_state("processing", msg_proc, "translate_es", True)
+        texto_proc_antes = self.pill.canvas.itemcget(self.pill.text, "text")
+
+        audio_mgr = create_autospec(AudioManager, instance=True)
+        audio_mgr.is_processing = True
+        audio_mgr.is_recording = False
+        audio_mgr.is_awake = True
+        audio_mgr.recording_mode = "translate_es"
+        config_mgr = create_autospec(ConfigManager, instance=True)
+        config_mgr.refine_prompt = True
+        config_mgr.groq_api_key = "gsk_ok"
+        som = create_autospec(SoundManager, instance=True)
+
+        atualizar = _funcao_do_willy(
+            "atualizar_ui", pill=self.pill, safe_dispatch_ui=lambda fn, *a: fn(*a),
+            audio_mgr=audio_mgr, config_mgr=config_mgr,
+        )
+        pronto = _funcao_do_willy(
+            "_pronto_para_gravar", audio_mgr=audio_mgr, config_mgr=config_mgr,
+            sound_mgr=som, atualizar_ui=atualizar,
+        )
+        on_voice = _funcao_do_willy(
+            "on_voice_hotkey", _pronto_para_gravar=pronto, audio_mgr=audio_mgr,
+        )
+        on_voice()
+        som.sound_error.assert_not_called()
+        audio_mgr.start_recording.assert_not_called()
+        self.assertTrue(audio_mgr.is_processing)
+        self.assertEqual("error", self.pill.current_state)
+        self.assertEqual("Aguarde o processo atual...", self.pill.canvas.itemcget(self.pill.text, "text"))
+        self.assertEqual(("processing", msg_proc, "translate_es", True), self.pill._persistente)
+
+        # Ao encerrar o aviso temporário, a pílula volta exatamente ao mesmo processing guardado.
+        self.pill._voltar(self.pill._persistente)
+        self.assertEqual("processing", self.pill.current_state)
+        self.assertEqual(("processing", msg_proc, "translate_es", True), self.pill._persistente)
+        self.assertEqual(texto_proc_antes, self.pill.canvas.itemcget(self.pill.text, "text"))
+
 
 class TestDesfazer(unittest.TestCase):
     def _desfazer(self, ultimo, falha=False, soltou=True):

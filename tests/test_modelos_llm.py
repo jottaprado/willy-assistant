@@ -50,6 +50,15 @@ class TestModeloEmUso(unittest.TestCase):
         for modelo in (modelos_llm.FLASH, modelos_llm.SMART, modelos_llm.CODER, modelos_llm.PADRAO):
             self.assertNotIn(modelo, modelos_llm.DESLIGADOS)
 
+    def test_modelo_desconhecido_distingue_valido_desligado_e_desconhecido(self):
+        for descon in ("modelo-experimental-1", "moonshotai/kimi-k2", "  gpt-4o  "):
+            with self.subTest(descon=descon):
+                self.assertIs(True, modelos_llm.modelo_desconhecido(descon))
+        for ok in ("", "   ", None, modelos_llm.FLASH, modelos_llm.SMART.upper(), modelos_llm.CODER,
+                   "llama-3.3-70b-versatile", "GEMMA2-9B-IT"):
+            with self.subTest(ok=ok):
+                self.assertIs(False, modelos_llm.modelo_desconhecido(ok))
+
 
 class TestConfig(unittest.TestCase):
     def setUp(self):
@@ -81,6 +90,67 @@ class TestConfig(unittest.TestCase):
         cfg.save_settings({"GROQ_LLM_MODEL": "gemma2-9b-it"})
         self.assertEqual(modelos_llm.CODER, cfg.llm_model)
         self.assertEqual(modelos_llm.CODER, dotenv_values(self.env)["GROQ_LLM_MODEL"])
+        self.assertIsNone(cfg.modelo_llm_substituido)
+
+    def test_env_com_modelo_desconhecido_registra_aviso_recreve_env_e_sobrevive_na_sessao(self):
+        import io
+        from contextlib import redirect_stderr
+
+        self._env_com("modelo-fora-catalogo-99")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            cfg = ConfigManager()
+        self.assertEqual(modelos_llm.SMART, cfg.llm_model)
+        self.assertEqual("modelo-fora-catalogo-99", cfg.modelo_llm_substituido)
+        self.assertEqual(modelos_llm.SMART, dotenv_values(self.env)["GROQ_LLM_MODEL"])
+        self.assertIn("modelo-fora-catalogo-99", err.getvalue())
+
+        # Salvar um modelo válido limpa o aviso.
+        cfg.save_settings({"GROQ_LLM_MODEL": modelos_llm.FLASH})
+        self.assertIsNone(cfg.modelo_llm_substituido)
+
+        # Próxima sessão com o .env já reescrito não mostra aviso de novo.
+        cfg2 = ConfigManager()
+        self.assertIsNone(cfg2.modelo_llm_substituido)
+
+    def test_import_profile_com_modelo_desconhecido_grava_smart_e_registra_aviso(self):
+        import io
+        import json
+        from contextlib import redirect_stderr
+
+        cfg = ConfigManager()
+        with tempfile.TemporaryDirectory() as td:
+            perfil = os.path.join(td, "perfil_modelo_desconhecido.json")
+            with open(perfil, "w", encoding="utf-8") as f:
+                json.dump({"settings": {"GROQ_LLM_MODEL": "modelo-externo-desconhecido"}}, f)
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertTrue(cfg.import_profile(perfil))
+        self.assertEqual(modelos_llm.SMART, cfg.llm_model)
+        self.assertEqual(modelos_llm.SMART, dotenv_values(self.env)["GROQ_LLM_MODEL"])
+        self.assertEqual("modelo-externo-desconhecido", cfg.modelo_llm_substituido)
+        self.assertIn("modelo-externo-desconhecido", err.getvalue())
+
+    def test_aviso_pilula_modelo_desconhecido_trunca_em_45_chars_e_partida_chama_no_main(self):
+        import ast
+
+        from tests.willy_isolado import _arvore_do_willy, _funcao_do_willy
+
+        formatar = _funcao_do_willy("_aviso_pilula_modelo_desconhecido")
+        curto = formatar("gpt-4o")
+        self.assertEqual("Modelo gpt-4o desconhecido: usando Smart", curto)
+        self.assertLessEqual(len(curto), 45)
+
+        longo = formatar("provedor/modelo-experimental-muito-longo-2026")
+        self.assertLessEqual(len(longo), 45)
+        self.assertIn("…", longo)
+        self.assertIn("Smart", longo)
+
+        codigo_main = ast.unparse(
+            next(n for n in _arvore_do_willy().body if isinstance(n, ast.FunctionDef) and n.name == "main")
+        )
+        self.assertIn("modelo_llm_substituido", codigo_main)
+        self.assertIn("_aviso_pilula_modelo_desconhecido", codigo_main)
 
 
 class TestChamadaAoLLM(unittest.TestCase):
